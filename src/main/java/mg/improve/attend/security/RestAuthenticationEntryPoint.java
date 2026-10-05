@@ -3,7 +3,8 @@ package mg.improve.attend.security;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.time.Instant;
+import java.util.List;
+import mg.improve.attend.exceptions.ApiError;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.security.web.AuthenticationEntryPoint;
@@ -29,16 +30,13 @@ public class RestAuthenticationEntryPoint implements AuthenticationEntryPoint {
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
         response.setCharacterEncoding("UTF-8");
 
-        ApiError body = new ApiError(
-                Instant.now().toString(),
+        ApiError body = ApiError.of(
                 HttpServletResponse.SC_UNAUTHORIZED,
                 "UNAUTHORIZED",
                 "Missing, expired or invalid access token",
-                request.getRequestURI());
+                request.getRequestURI(),
+                List.of());
 
         objectMapper.writeValue(response.getOutputStream(), body);
-    }
-
-    private record ApiError(String timestamp, int status, String error, String message, String path) {
     }
 }
