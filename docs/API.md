@@ -92,9 +92,10 @@ Endpoints that don't carry the event id in the path must resolve it before the c
 
 Check-in is the critical one: a scanner who is an organizer of event A must never be able to scan a ticket belonging to event B. Always compare against the event resolved from the **ticket**, never an event id supplied by the client.
 
-### 403 vs 404
-- Caller is authenticated but not allowed on a **visible** resource: `403`.
-- Private event and caller is neither organizer nor ticket holder: `404`, so the event's existence is not leaked.
+### 401, 403 vs 404
+- Private event and caller is anonymous: `401`.
+- Private event and caller is authenticated but not an organizer: `403 NOT_AN_ORGANIZER`.
+- Unknown resource id: `404`.
 
 ---
 
@@ -263,7 +264,7 @@ Response `200`: paginated wrapper with items:
 ```
 
 ### GET `/events/{eventId}`
-Public for public events. Private events are visible only to organizers and ticket holders (otherwise `404`).
+Public events are visible to everyone. A private event is visible only to its organizers (`CREATOR` / `ADMIN`): an anonymous caller gets `401`, and an authenticated non-organizer gets `403`. Unknown id: `404`.
 
 Response `200`:
 ```json
@@ -547,7 +548,7 @@ Response `200`:
 | POST | `/users/me/password` | 🔒 | user |
 | POST | `/events` | 🔒 | user |
 | GET | `/events` | optional | public; `isMine=true` for the caller's organized events |
-| GET | `/events/{eventId}` | optional | public, or organizer / ticket holder |
+| GET | `/events/{eventId}` | optional | public; private → organizer only (401 anon / 403 non-organizer) |
 | PATCH | `/events/{eventId}` | 🔒 | organizer |
 | POST | `/events/{eventId}/cancel` | 🔒 | organizer |
 | DELETE | `/events/{eventId}` | 🔒 | creator |

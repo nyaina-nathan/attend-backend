@@ -22,8 +22,8 @@ info:
     resolve the event id and then require an `event_organizer` row for the caller.
 
     - Caller authenticated but not allowed on a **visible** resource: `403`.
-    - Private event and caller is neither organizer nor ticket holder: `404`
-      (existence is not leaked).
+    - Private event and caller is not an organizer: `401` when anonymous,
+      `403` when authenticated. Existence is not hidden.
   version: 0.0.1
 servers:
   - url: /api
@@ -396,8 +396,9 @@ paths:
       tags: [Events]
       summary: Get an event
       description: |
-        Public for public events. Private events are visible only to organizers
-        and ticket holders; anyone else receives `404` so existence is not leaked.
+        Public for public events. A private event is visible only to its
+        organizers (`CREATOR` or `ADMIN`): an anonymous caller receives `401` and
+        an authenticated non-organizer `403`. Unknown ids return `404`.
       operationId: getEvent
       security:
         - {}
@@ -409,6 +410,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/EventDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
         '404':
           $ref: '#/components/responses/NotFound'
     patch:
@@ -581,8 +586,8 @@ paths:
       tags: [Tiers]
       summary: List ticket tiers for an event
       description: |
-        Same visibility rules as the event. Private events are visible only to
-        organizers and ticket holders; anyone else receives `404`.
+        Same visibility rules as `GET /events/{eventId}`: a private event's tiers
+        are visible only to its organizers.
       operationId: listTiers
       security:
         - {}

@@ -1,6 +1,7 @@
 package mg.improve.attend.repository;
 
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.repository.entities.JEventOrganizer;
@@ -10,6 +11,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface JEventOrganizerRepository extends JpaRepository<JEventOrganizer, UUID> {
+
+    Optional<JEventOrganizer> findByEvent_IdAndUser_Id(UUID eventId, UUID userId);
 
     @Query("select o.event.id from JEventOrganizer o where o.user.id = :userId and o.eventRole = :eventRole")
     List<UUID> findEventIdsByUserAndRole(@Param("userId") UUID userId, @Param("eventRole") EventRole eventRole);
