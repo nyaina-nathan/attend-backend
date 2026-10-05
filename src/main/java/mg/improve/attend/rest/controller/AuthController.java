@@ -2,6 +2,7 @@ package mg.improve.attend.rest.controller;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.request.LoginRequest;
 import mg.improve.attend.domain.dto.request.RegisterRequest;
 import mg.improve.attend.domain.dto.response.UserResponse;
 import mg.improve.attend.security.AuthCookieFactory;
@@ -31,6 +32,15 @@ public class AuthController {
             HttpServletRequest httpRequest) {
         AuthResult result = authService.register(request, httpRequest);
         return ResponseEntity.status(HttpStatus.CREATED)
+                .headers(authCookieFactory.headers(result.accessToken(), result.refreshToken()))
+                .body(result.user());
+    }
+
+    @PostMapping("/login")
+    public ResponseEntity<UserResponse> login(@RequestBody LoginRequest request,
+            HttpServletRequest httpRequest) {
+        AuthResult result = authService.login(request, httpRequest);
+        return ResponseEntity.ok()
                 .headers(authCookieFactory.headers(result.accessToken(), result.refreshToken()))
                 .body(result.user());
     }

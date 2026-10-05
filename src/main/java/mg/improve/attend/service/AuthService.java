@@ -2,6 +2,7 @@ package mg.improve.attend.service;
 
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.request.LoginRequest;
 import mg.improve.attend.domain.dto.request.RegisterRequest;
 import mg.improve.attend.domain.dto.response.UserResponse;
 import mg.improve.attend.domain.entity.RefreshToken;
@@ -9,21 +10,23 @@ import mg.improve.attend.domain.entity.Users;
 import mg.improve.attend.domain.mapper.RefreshTokenMapper;
 import mg.improve.attend.domain.mapper.UsersMapper;
 import mg.improve.attend.exceptions.ConflictException;
+import mg.improve.attend.exceptions.UnauthorizedException;
 import mg.improve.attend.repository.JRefreshTokenRepository;
 import mg.improve.attend.repository.JUsersRepository;
 import mg.improve.attend.security.ClientInfo;
 import mg.improve.attend.security.ClientInfoResolver;
 import mg.improve.attend.security.IssuedToken;
 import mg.improve.attend.security.JwtService;
+import mg.improve.attend.validator.LoginRequestValidator;
 import mg.improve.attend.validator.RegisterRequestValidator;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Registration use case. Owns the orchestration: validate input, enforce uniqueness, hash the
- * password, persist the user and persist the refresh token, leaving HTTP entirely to the
- * controller.
+ * Authentication use cases (register, login). Own the orchestration: validate input, enforce
+ * uniqueness and credentials, hash/verify passwords, persist the user and the refresh token,
+ * leaving HTTP entirely to the controller.
  */
 @Service
 @RequiredArgsConstructor
@@ -36,6 +39,7 @@ public class AuthService {
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
     private final RegisterRequestValidator validator;
+    private final LoginRequestValidator loginValidator;
     private final ClientInfoResolver clientInfoResolver;
 
     @Transactional
@@ -57,11 +61,32 @@ public class AuthService {
         // user is mapped back for the response.
         Users savedUser = usersMapper.toDomain(userRepo.saveAndFlush(usersMapper.toEntity(user)));
 
-        IssuedToken accessToken = jwtService.issueAccessToken(savedUser);
-        IssuedToken refreshToken = jwtService.issueRefreshToken(savedUser);
-        persistRefreshToken(savedUser, refreshToken, clientInfo);
+        return startSession(savedUser, clientInfo);
+    }
 
-        return new AuthResult(UserResponse.from(savedUser), accessToken, refreshToken);
+    @Transactional
+    public AuthResult login(LoginRequest request, HttpServletRequest httpRequest) {
+        loginValidator.validate(request);
+
+        // Unknown email and wrong password are deliberately indistinguishable.
+        Users user = userRepo.findByEmail(request.email())
+                .map(usersMapper::toDomain)
+                .filter(candidate -> passwordEncoder.matches(request.password(), candidate.getPasswordHash()))
+                .orElseThrow(AuthService::invalidCredentials);
+
+        ClientInfo clientInfo = clientInfoResolver.resolve(httpRequest);
+        return startSession(user, clientInfo);
+    }
+
+    private AuthResult startSession(Users user, ClientInfo clientInfo) {
+        IssuedToken accessToken = jwtService.issueAccessToken(user);
+        IssuedToken refreshToken = jwtService.issueRefreshToken(user);
+        persistRefreshToken(user, refreshToken, clientInfo);
+        return new AuthResult(UserResponse.from(user), accessToken, refreshToken);
+    }
+
+    private static UnauthorizedException invalidCredentials() {
+        return new UnauthorizedException("INVALID_CREDENTIALS", "Invalid email or password");
     }
 
     private void requireEmailAvailable(String email) {
