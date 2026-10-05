@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
+import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.exceptions.BadRequestException;
 import mg.improve.attend.exceptions.ErrorDetail;
 import org.springframework.data.domain.Sort;
@@ -63,6 +64,31 @@ public class EventValidator {
     private void validateLocation(String location, List<ErrorDetail> details) {
         if (location != null && location.length() > LOCATION_MAX) {
             details.add(new ErrorDetail("location", "must be at most " + LOCATION_MAX + " characters"));
+        }
+    }
+
+    /**
+     * Validates a partial {@link EventUpdateRequest}. Only present fields are checked; the
+     * time range is validated against the event's current values when one side is omitted.
+     */
+    public void validateUpdate(EventUpdateRequest request, Instant existingStartTime, Instant existingEndTime) {
+        List<ErrorDetail> details = new ArrayList<>();
+
+        if (request.title() != null) {
+            validateTitle(request.title(), details);
+        }
+        if (request.location() != null) {
+            validateLocation(request.location(), details);
+        }
+
+        Instant startTime = request.startTime() != null ? request.startTime() : existingStartTime;
+        Instant endTime = request.endTime() != null ? request.endTime() : existingEndTime;
+        if (startTime != null && endTime != null && !endTime.isAfter(startTime)) {
+            details.add(new ErrorDetail("endTime", "must be after startTime"));
+        }
+
+        if (!details.isEmpty()) {
+            throw new BadRequestException("VALIDATION_ERROR", "Validation failed", details);
         }
     }
 

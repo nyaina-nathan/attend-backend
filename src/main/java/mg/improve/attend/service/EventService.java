@@ -13,6 +13,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
+import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
 import mg.improve.attend.domain.dto.response.EventSummary;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
@@ -22,6 +23,7 @@ import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.EventsMapper;
+import mg.improve.attend.exceptions.ConflictException;
 import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.exceptions.UnauthorizedException;
@@ -99,8 +101,7 @@ public class EventService {
      */
     @Transactional(readOnly = true)
     public EventDetail getEvent(UUID eventId, UUID userId) {
-        JEvents event = events.findById(eventId)
-                .orElseThrow(() -> new NotFoundException("EVENT_NOT_FOUND", "Event not found"));
+        JEvents event = loadEventOr404(eventId);
 
         EventRole myRole = userId == null ? null
                 : organizers.findByEvent_IdAndUser_Id(eventId, userId)
@@ -139,6 +140,83 @@ public class EventService {
                             tier.getCapacity(), remaining);
                 })
                 .toList();
+    }
+
+    /**
+     * Updates an event. Creator only. Only the non-null fields of the request are applied.
+     */
+    @Transactional
+    public EventDetail updateEvent(UUID eventId, UUID userId, EventUpdateRequest request) {
+        JEvents event = requireCreator(eventId, userId);
+        validator.validateUpdate(request, event.getStartTime(), event.getEndTime());
+
+        if (request.title() != null) {
+            event.setTitle(request.title());
+        }
+        if (request.description() != null) {
+            event.setDescription(request.description());
+        }
+        if (request.startTime() != null) {
+            event.setStartTime(request.startTime());
+        }
+        if (request.endTime() != null) {
+            event.setEndTime(request.endTime());
+        }
+        if (request.isPublic() != null) {
+            event.setPublic(request.isPublic());
+        }
+        if (request.location() != null) {
+            event.setLocation(request.location());
+        }
+        if (request.status() != null) {
+            event.setStatus(request.status());
+        }
+
+        JEvents saved = events.saveAndFlush(event);
+        return EventDetail.from(eventsMapper.toDomain(saved), EventRole.CREATOR, tiersFor(eventId));
+    }
+
+    /**
+     * Deletes an event. Creator only, and only when it has no tickets (cancel instead).
+     */
+    @Transactional
+    public void deleteEvent(UUID eventId, UUID userId) {
+        requireCreator(eventId, userId);
+
+        if (tickets.existsByTier_Event_Id(eventId)) {
+            throw new ConflictException("EVENT_HAS_TICKETS", "Tickets exist for this event; cancel it instead");
+        }
+
+        // No tickets, so tiers and organizer rows can go before the event itself.
+        organizers.deleteByEventId(eventId);
+        tiers.deleteByEventId(eventId);
+        events.deleteById(eventId);
+    }
+
+    /**
+     * Cancels an event. Creator only. Tickets are left untouched (check-in rejects tickets of a
+     * cancelled event).
+     */
+    @Transactional
+    public EventDetail cancelEvent(UUID eventId, UUID userId) {
+        JEvents event = requireCreator(eventId, userId);
+        event.setStatus(EventStatus.CANCELLED);
+
+        JEvents saved = events.saveAndFlush(event);
+        return EventDetail.from(eventsMapper.toDomain(saved), EventRole.CREATOR, tiersFor(eventId));
+    }
+
+    private JEvents loadEventOr404(UUID eventId) {
+        return events.findById(eventId)
+                .orElseThrow(() -> new NotFoundException("EVENT_NOT_FOUND", "Event not found"));
+    }
+
+    private JEvents requireCreator(UUID eventId, UUID userId) {
+        JEvents event = loadEventOr404(eventId);
+        if (!organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, userId, EventRole.CREATOR)) {
+            throw new ForbiddenException("NOT_THE_CREATOR", "Caller is not the creator of this event");
+        }
+        return event;
     }
 
     /**

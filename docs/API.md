@@ -295,7 +295,7 @@ Response `200`:
 `remaining` = `capacity` minus tickets in `VALID` or `USED`.
 
 ### PATCH `/events/{eventId}` 🔒
-Organizers only (`CREATOR` or `ADMIN`). Partial update.
+Creator only (`CREATOR`). Partial update. Only the fields present in the body are applied.
 
 Request:
 ```json
@@ -312,12 +312,11 @@ Request:
 Response `200`: full event object. Errors: `400`, `403`, `404`.
 
 ### POST `/events/{eventId}/cancel` 🔒
-Organizers only. Sets `status = CANCELLED`. No body.
+Creator only (`CREATOR`). Sets `status = CANCELLED`. No body. Tickets are left as-is (check-in rejects tickets of a cancelled event).
 Response `200`: event object.
-Side effect to decide: tickets stay `VALID` until refunded, or are bulk-marked `REFUNDED`. See notes at the end.
 
 ### DELETE `/events/{eventId}` 🔒
-`CREATOR` only. Allowed only if no tickets exist; otherwise `409` (use cancel instead).
+`CREATOR` only. Allowed only if no tickets exist; otherwise `409` (`EVENT_HAS_TICKETS`, use cancel instead).
 Response `204`.
 
 ---
@@ -549,8 +548,8 @@ Response `200`:
 | POST | `/events` | 🔒 | user |
 | GET | `/events` | optional | public; `isMine=true` for the caller's organized events |
 | GET | `/events/{eventId}` | optional | public; private → organizer only (401 anon / 403 non-organizer) |
-| PATCH | `/events/{eventId}` | 🔒 | organizer |
-| POST | `/events/{eventId}/cancel` | 🔒 | organizer |
+| PATCH | `/events/{eventId}` | 🔒 | creator |
+| POST | `/events/{eventId}/cancel` | 🔒 | creator |
 | DELETE | `/events/{eventId}` | 🔒 | creator |
 | GET / POST | `/events/{eventId}/organizers` | 🔒 | organizer / creator |
 | DELETE | `/events/{eventId}/organizers/{organizerId}` | 🔒 | creator |
@@ -571,7 +570,7 @@ Response `200`:
 ## Notes and open decisions
 
 - **Payments**: the schema has `price_paid` but no payment table. For paid tiers, `POST /tiers/{tierId}/tickets` currently issues the ticket directly. If you add real payments, this endpoint should become a checkout flow (create a pending order, then confirm via webhook).
-- **Event cancellation**: decide whether `cancel` bulk-updates tickets to `REFUNDED` or leaves them `VALID`. The check-in endpoint should reject tickets of a `CANCELLED` event either way.
+- **Event cancellation**: `cancel` leaves tickets `VALID` (they can be refunded individually); check-in rejects tickets of a `CANCELLED` event.
 - **`validUntil`**: nullable in the schema. A sensible default is the event's `endTime` at issue time.
 - **Postponed events**: if `startTime`/`endTime` change, existing tickets' `validUntil` should be updated too.
 - **Private events**: there is no invite mechanism in the schema, so access is by direct link (UUID) for ticket purchase unless you add an invite table.
