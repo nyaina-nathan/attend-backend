@@ -1,10 +1,19 @@
 package mg.improve.attend.service;
 
+import jakarta.persistence.criteria.Predicate;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
+import mg.improve.attend.domain.dto.response.EventSummary;
+import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
@@ -12,11 +21,17 @@ import mg.improve.attend.domain.mapper.EventsMapper;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
 import mg.improve.attend.repository.entities.JEventOrganizer;
 import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.repository.entities.JUsers;
 import mg.improve.attend.validator.EventValidator;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
+import org.springframework.data.jpa.domain.Specification;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -30,6 +45,7 @@ public class EventService {
 
     private final JEventsRepository events;
     private final JEventOrganizerRepository organizers;
+    private final JTicketTierRepository tiers;
     private final JUsersRepository users;
     private final EventsMapper eventsMapper;
     private final EventValidator validator;
@@ -65,5 +81,58 @@ public class EventService {
 
         Events domain = eventsMapper.toDomain(saved);
         return EventDetail.from(domain, EventRole.CREATOR, List.of());
+    }
+
+    /**
+     * Public discovery. Lists {@code isPublic = true} events filtered by title, start-time
+     * bounds and status, with the requested page and sort.
+     */
+    @Transactional(readOnly = true)
+    public PageEventSummary listEvents(String q, Instant from, Instant to, EventStatus status,
+            int page, int size, String sort) {
+        Sort resolvedSort = validator.validateListQuery(page, size, sort);
+        Pageable pageable = PageRequest.of(page, size, resolvedSort);
+
+        Page<JEvents> eventsPage = events.findAll(publicFilter(q, from, to, status), pageable);
+        Map<UUID, BigDecimal> minPrices = minPricesByEvent(eventsPage.getContent());
+        List<EventSummary> content = eventsPage.getContent().stream()
+                .map(entity -> EventSummary.from(eventsMapper.toDomain(entity), minPrices.get(entity.getId())))
+                .toList();
+
+        return new PageEventSummary(
+                eventsPage.getNumber(),
+                eventsPage.getSize(),
+                eventsPage.getTotalElements(),
+                eventsPage.getTotalPages(),
+                content);
+    }
+
+    private static Specification<JEvents> publicFilter(String q, Instant from, Instant to, EventStatus status) {
+        return (root, query, cb) -> {
+            List<Predicate> predicates = new ArrayList<>();
+            predicates.add(cb.isTrue(root.get("isPublic")));
+            predicates.add(cb.equal(root.get("status"), status));
+            if (q != null && !q.isBlank()) {
+                predicates.add(cb.like(cb.lower(root.get("title")), "%" + q.toLowerCase(Locale.ROOT) + "%"));
+            }
+            if (from != null) {
+                predicates.add(cb.greaterThanOrEqualTo(root.get("startTime"), from));
+            }
+            if (to != null) {
+                predicates.add(cb.lessThanOrEqualTo(root.get("startTime"), to));
+            }
+            return cb.and(predicates.toArray(new Predicate[0]));
+        };
+    }
+
+    private Map<UUID, BigDecimal> minPricesByEvent(List<JEvents> content) {
+        if (content.isEmpty()) {
+            return Map.of();
+        }
+        List<UUID> eventIds = content.stream().map(JEvents::getId).toList();
+        return tiers.findMinPriceByEventIds(eventIds).stream()
+                .collect(Collectors.toMap(
+                        JTicketTierRepository.MinPrice::getEventId,
+                        JTicketTierRepository.MinPrice::getMinPrice));
     }
 }
