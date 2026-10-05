@@ -241,6 +241,29 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Users]
+      summary: Delete the current user
+      description: |
+        Permanently deletes the authenticated user and all related data,
+        irreversibly. Clears the `access_token` and `refresh_token` cookies.
+
+        Removes the user's refresh tokens, event_organizer rows and owned
+        tickets. Events they created are deleted too, including their tiers and
+        tickets held by others. Tickets they checked in keep their status and
+        have their check-in marker cleared (`id_checked_by` and
+        `checked_in_at`).
+      operationId: deleteCurrentUser
+      responses:
+        '204':
+          description: User and related data deleted. Cookies cleared.
+          headers:
+            Set-Cookie:
+              description: Expired `access_token` and `refresh_token` cookies.
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
 
   /users/me/password:
     post:

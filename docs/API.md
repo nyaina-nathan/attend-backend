@@ -193,6 +193,13 @@ Request:
 ```
 Response `204`. Revokes all other refresh tokens. Errors: `400`, `401`.
 
+### DELETE `/users/me` 🔒
+Permanently deletes the authenticated user and all related data, irreversibly, and clears the auth cookies.
+
+Removes the user's refresh tokens, `event_organizer` rows and owned tickets. Events they created are deleted too, including their tiers and tickets held by others. Tickets they checked in keep their status with their check-in marker cleared (`checked_by` and `checkedInAt`).
+
+Response `204`. Errors: `401`.
+
 ---
 
 ## 3. Events
@@ -532,7 +539,7 @@ Response `200`:
 | POST | `/auth/login` | none | anyone |
 | POST | `/auth/refresh` | refresh cookie | anyone |
 | POST | `/auth/logout` | 🔒 | user |
-| GET / PATCH | `/users/me` | 🔒 | user |
+| GET / PATCH / DELETE | `/users/me` | 🔒 | user |
 | POST | `/users/me/password` | 🔒 | user |
 | POST | `/events` | 🔒 | user |
 | GET | `/events` | none | anyone |
