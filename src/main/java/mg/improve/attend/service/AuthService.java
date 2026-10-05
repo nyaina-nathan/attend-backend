@@ -17,8 +17,7 @@ import mg.improve.attend.security.ClientInfo;
 import mg.improve.attend.security.ClientInfoResolver;
 import mg.improve.attend.security.IssuedToken;
 import mg.improve.attend.security.JwtService;
-import mg.improve.attend.validator.LoginRequestValidator;
-import mg.improve.attend.validator.RegisterRequestValidator;
+import mg.improve.attend.validator.AuthValidator;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,8 +37,7 @@ public class AuthService {
     private final RefreshTokenMapper refreshTokenMapper;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
-    private final RegisterRequestValidator validator;
-    private final LoginRequestValidator loginValidator;
+    private final AuthValidator validator;
     private final ClientInfoResolver clientInfoResolver;
 
     @Transactional
@@ -66,7 +64,7 @@ public class AuthService {
 
     @Transactional
     public AuthResult login(LoginRequest request, HttpServletRequest httpRequest) {
-        loginValidator.validate(request);
+        validator.validate(request);
 
         // Unknown email and wrong password are deliberately indistinguishable.
         Users user = userRepo.findByEmail(request.email())
