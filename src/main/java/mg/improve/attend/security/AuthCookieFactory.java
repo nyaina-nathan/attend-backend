@@ -28,12 +28,17 @@ public class AuthCookieFactory {
     }
 
     /**
-     * Builds the {@code Set-Cookie} headers for a successful authentication.
+     * Builds the {@code Set-Cookie} headers for a successful authentication. A {@code null}
+     * refresh token means the refresh token was reused rather than rotated, so only the access
+     * cookie is (re)set.
      */
     public HttpHeaders headers(IssuedToken accessToken, IssuedToken refreshToken) {
         HttpHeaders headers = new HttpHeaders();
         headers.add(HttpHeaders.SET_COOKIE, build(ACCESS_TOKEN_COOKIE, accessToken, ACCESS_TOKEN_PATH).toString());
-        headers.add(HttpHeaders.SET_COOKIE, build(REFRESH_TOKEN_COOKIE, refreshToken, REFRESH_TOKEN_PATH).toString());
+        if (refreshToken != null) {
+            headers.add(HttpHeaders.SET_COOKIE,
+                    build(REFRESH_TOKEN_COOKIE, refreshToken, REFRESH_TOKEN_PATH).toString());
+        }
         return headers;
     }
 
