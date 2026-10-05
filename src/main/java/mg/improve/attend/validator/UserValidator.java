@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.regex.Pattern;
+import mg.improve.attend.domain.dto.request.ChangePasswordRequest;
 import mg.improve.attend.domain.dto.request.UserUpdateRequest;
 import mg.improve.attend.exceptions.BadRequestException;
 import mg.improve.attend.exceptions.ErrorDetail;
@@ -24,6 +25,8 @@ public class UserValidator {
     private static final int FULL_NAME_MAX = 255;
     private static final int USERNAME_MIN = 3;
     private static final int USERNAME_MAX = 50;
+    private static final int PASSWORD_MIN = 8;
+    private static final int PASSWORD_MAX = 72;
 
     public void validate(UserUpdateRequest request) {
         List<ErrorDetail> details = new ArrayList<>();
@@ -31,6 +34,26 @@ public class UserValidator {
         validateFullName(request.fullName(), details);
         validateUsername(request.username(), details);
         validateDateBirth(request.dateBirth(), details);
+
+        if (!details.isEmpty()) {
+            throw new BadRequestException("VALIDATION_ERROR", "Validation failed", details);
+        }
+    }
+
+    public void validate(ChangePasswordRequest request) {
+        List<ErrorDetail> details = new ArrayList<>();
+
+        if (isBlank(request.currentPassword())) {
+            details.add(new ErrorDetail("currentPassword", "must not be blank"));
+        }
+        if (isBlank(request.newPassword())) {
+            details.add(new ErrorDetail("newPassword", "must not be blank"));
+        } else if (request.newPassword().length() < PASSWORD_MIN || request.newPassword().length() > PASSWORD_MAX) {
+            details.add(new ErrorDetail("newPassword",
+                    "must be between " + PASSWORD_MIN + " and " + PASSWORD_MAX + " characters"));
+        } else if (request.newPassword().equals(request.currentPassword())) {
+            details.add(new ErrorDetail("newPassword", "must differ from current password"));
+        }
 
         if (!details.isEmpty()) {
             throw new BadRequestException("VALIDATION_ERROR", "Validation failed", details);
@@ -64,5 +87,9 @@ public class UserValidator {
         if (dateBirth != null && dateBirth.isAfter(LocalDate.now())) {
             details.add(new ErrorDetail("dateBirth", "must be in the past"));
         }
+    }
+
+    private static boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
 }

@@ -24,8 +24,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Refresh use case. Issues a new access token and decides, based on how close the presented
- * refresh token is to expiry, whether to rotate it.
+ * Owns the refresh-token lifecycle: issuing, rotating and revoking sessions, plus the
+ * {@code POST /auth/refresh} use case.
  *
  * <p>Reuse detection: because an unused refresh token stays valid, the only way to present a
  * revoked one is to replay a token that was already rotated. That revokes the rest of the
@@ -73,6 +73,27 @@ public class RefreshTokenService {
     }
 
     /**
+     * Issues a brand-new access + refresh pair and persists the refresh token. Shared by
+     * register, login and password change so token creation has a single owner.
+     */
+    @Transactional
+    public SessionTokens issueSession(Users user, ClientInfo clientInfo) {
+        IssuedToken accessToken = jwtService.issueAccessToken(user);
+        IssuedToken refreshToken = jwtService.issueRefreshToken(user);
+        refreshTokens.save(newRefreshEntity(user, refreshToken, clientInfo));
+        return new SessionTokens(accessToken, refreshToken);
+    }
+
+    /**
+     * Revokes every still-active refresh token of the user, invalidating their existing
+     * sessions.
+     */
+    @Transactional
+    public void revokeAllActive(UUID userId) {
+        refreshTokens.revokeActiveByUserId(userId, Instant.now());
+    }
+
+    /**
      * Logs the caller out by revoking the refresh token they present, together with any token
      * it was replaced by. Idempotent: a missing, unknown, foreign or already-revoked token is
      * simply ignored, because the cookies are cleared regardless.
@@ -93,17 +114,21 @@ public class RefreshTokenService {
 
     private void rotate(JRefreshToken current, IssuedToken newToken, ClientInfo clientInfo) {
         Users user = usersMapper.toDomain(current.getUser());
-        RefreshToken replacement = RefreshToken.builder()
-                .user(user)
-                .tokenHash(jwtService.hashRefreshToken(newToken.token()))
-                .expiresAt(newToken.expiresAt())
-                .userAgent(clientInfo.userAgent())
-                .ipAddress(clientInfo.ipAddress())
-                .build();
-        JRefreshToken savedReplacement = refreshTokens.save(refreshTokenMapper.toEntity(replacement));
+        JRefreshToken savedReplacement = refreshTokens.save(newRefreshEntity(user, newToken, clientInfo));
 
         current.setRevokedAt(Instant.now());
         current.setReplacedBy(savedReplacement);
+    }
+
+    private JRefreshToken newRefreshEntity(Users user, IssuedToken refreshToken, ClientInfo clientInfo) {
+        RefreshToken token = RefreshToken.builder()
+                .user(user)
+                .tokenHash(jwtService.hashRefreshToken(refreshToken.token()))
+                .expiresAt(refreshToken.expiresAt())
+                .userAgent(clientInfo.userAgent())
+                .ipAddress(clientInfo.ipAddress())
+                .build();
+        return refreshTokenMapper.toEntity(token);
     }
 
     private void revokeChainFrom(JRefreshToken start) {

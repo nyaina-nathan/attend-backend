@@ -269,7 +269,9 @@ paths:
     post:
       tags: [Users]
       summary: Change the current user's password
-      description: Revokes all other refresh tokens on success.
+      description: |
+        Revokes all existing refresh tokens on success and issues a new session
+        for the caller. All other devices are logged out.
       operationId: changePassword
       requestBody:
         required: true
@@ -279,7 +281,12 @@ paths:
               $ref: '#/components/schemas/ChangePasswordRequest'
       responses:
         '204':
-          description: Password changed. Other refresh tokens revoked.
+          description: Password changed. All previous refresh tokens revoked; new cookies set.
+          headers:
+            Set-Cookie:
+              description: New HttpOnly `access_token` and `refresh_token` cookies.
+              schema:
+                type: string
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':

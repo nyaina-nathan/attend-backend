@@ -1,14 +1,18 @@
 package mg.improve.attend.service;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.request.ChangePasswordRequest;
 import mg.improve.attend.domain.dto.request.UserUpdateRequest;
 import mg.improve.attend.domain.dto.response.UserMeResponse;
 import mg.improve.attend.domain.entity.Users;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.mapper.UsersMapper;
+import mg.improve.attend.exceptions.BadRequestException;
 import mg.improve.attend.exceptions.ConflictException;
+import mg.improve.attend.exceptions.ErrorDetail;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
@@ -16,7 +20,9 @@ import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
 import mg.improve.attend.repository.entities.JUsers;
+import mg.improve.attend.security.ClientInfoResolver;
 import mg.improve.attend.validator.UserValidator;
+import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -35,6 +41,9 @@ public class UserService {
     private final JTicketRepository tickets;
     private final UsersMapper usersMapper;
     private final UserValidator validator;
+    private final PasswordEncoder passwordEncoder;
+    private final ClientInfoResolver clientInfoResolver;
+    private final RefreshTokenService refreshTokenService;
 
     /**
      * Hard-deletes the user and everything that depends on them, in foreign-key order.
@@ -107,5 +116,30 @@ public class UserService {
                 .ifPresent(existing -> {
                     throw new ConflictException("USERNAME_TAKEN", "Username already in use");
                 });
+    }
+
+    /**
+     * Changes the password after verifying the current one, then invalidates every existing
+     * refresh token and issues a fresh session for the caller so they stay logged in.
+     */
+    @Transactional
+    public SessionTokens changePassword(UUID userId, ChangePasswordRequest request,
+            HttpServletRequest httpRequest) {
+        validator.validate(request);
+
+        JUsers entity = users.findById(userId)
+                .orElseThrow(() -> new NotFoundException("USER_NOT_FOUND", "User not found"));
+        if (!passwordEncoder.matches(request.currentPassword(), entity.getPasswordHash())) {
+            throw new BadRequestException("VALIDATION_ERROR", "Validation failed",
+                    List.of(new ErrorDetail("currentPassword", "is incorrect")));
+        }
+
+        entity.setPasswordHash(passwordEncoder.encode(request.newPassword()));
+        users.saveAndFlush(entity);
+
+        refreshTokenService.revokeAllActive(userId);
+
+        Users user = usersMapper.toDomain(entity);
+        return refreshTokenService.issueSession(user, clientInfoResolver.resolve(httpRequest));
     }
 }

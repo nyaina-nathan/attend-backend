@@ -191,7 +191,7 @@ Request:
   "newPassword": "An0therPass!"
 }
 ```
-Response `204`. Revokes all other refresh tokens. Errors: `400`, `401`.
+Response `204`. Revokes all existing refresh tokens and issues a new session for the caller (new cookies set); other devices are logged out. Errors: `400`, `401`.
 
 ### DELETE `/users/me` 🔒
 Permanently deletes the authenticated user and all related data, irreversibly, and clears the auth cookies.
