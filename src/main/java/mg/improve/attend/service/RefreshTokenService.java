@@ -43,7 +43,11 @@ public class RefreshTokenService {
     private final ClientInfoResolver clientInfoResolver;
     private final RefreshProperties properties;
 
-    @Transactional
+    /**
+     * Reuse detection mutates the token chain and then fails with {@link UnauthorizedException}.
+     * The revocation must survive that failure, so this transaction does not roll back on it.
+     */
+    @Transactional(noRollbackFor = UnauthorizedException.class)
     public SessionTokens refresh(HttpServletRequest httpRequest) {
         String rawToken = cookieResolver.resolve(httpRequest).orElseThrow(RefreshTokenService::invalid);
         if (!jwtService.isValid(rawToken) || !jwtService.isRefreshToken(rawToken)) {
