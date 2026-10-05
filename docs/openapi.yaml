@@ -1,0 +1,1693 @@
+openapi: 3.1.0
+info:
+  title: Events & Tickets API
+  description: |
+    Events and ticketing backend.
+
+    ## Conventions
+    - **IDs** are UUID strings.
+    - **Timestamps** are ISO-8601 UTC, e.g. `2026-11-20T18:00:00Z`.
+    - **Money** is a string-safe number with 2 decimals (`"price": 25.00`). A single
+      currency is assumed; it is not part of the schema.
+    - **Auth** uses a JWT access token plus a refresh token, both delivered as
+      `HttpOnly` cookies (`access_token`, `refresh_token`). Operations marked
+      authenticated require the access cookie.
+    - `password_hash` and `token_hash` are never returned.
+    - List endpoints are paginated with `?page=0&size=20`.
+
+    ## Authorization model
+    Roles are **per event**, not global. The JWT carries only the user identity
+    (no role claims); role checks happen in the service layer. URL-level security
+    merely answers "is the caller authenticated?". Organizer-only operations
+    resolve the event id and then require an `event_organizer` row for the caller.
+
+    - Caller authenticated but not allowed on a **visible** resource: `403`.
+    - Private event and caller is neither organizer nor ticket holder: `404`
+      (existence is not leaked).
+  version: 0.0.1
+servers:
+  - url: /api
+    description: Base URL. All paths below are relative to it.
+tags:
+  - name: Auth
+    description: Registration, login, token rotation and logout.
+  - name: Users
+    description: Current user profile.
+  - name: Events
+    description: Event lifecycle and discovery.
+  - name: Organizers
+    description: Per-event organizer management.
+  - name: Tiers
+    description: Ticket tiers (pricing and capacity).
+  - name: Tickets
+    description: Ticket issuance, check-in, cancellation and refunds.
+  - name: Stats
+    description: Per-event sales and attendance statistics.
+security:
+  - access_token: []
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      description: |
+        Public. Creates a user and logs them in by setting the `access_token`
+        and `refresh_token` cookies.
+      operationId: register
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created. Sets `access_token` and `refresh_token` cookies.
+          headers:
+            Set-Cookie:
+              description: HttpOnly `access_token` and `refresh_token` cookies.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          description: Email or username already taken.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                emailTaken:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: EMAIL_TAKEN
+                    message: Email already in use
+                    path: /api/auth/register
+                    details: []
+                usernameTaken:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: USERNAME_TAKEN
+                    message: Username already in use
+                    path: /api/auth/register
+                    details: []
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Log in
+      description: Public. Sets `access_token` and `refresh_token` cookies.
+      operationId: login
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Authenticated. Sets `access_token` and `refresh_token` cookies.
+          headers:
+            Set-Cookie:
+              description: HttpOnly `access_token` and `refresh_token` cookies.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          description: Invalid credentials.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalidCredentials:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 401
+                    error: INVALID_CREDENTIALS
+                    message: Invalid email or password
+                    path: /api/auth/login
+                    details: []
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate the refresh token
+      description: |
+        Public, but requires the `refresh_token` cookie. No request body.
+
+        Rotates the token: the old token gets `revoked_at` + `replaced_by`. If a
+        revoked token is presented again, the whole chain is revoked.
+      operationId: refresh
+      security:
+        - refresh_token: []
+      responses:
+        '204':
+          description: Token rotated. New cookies set.
+          headers:
+            Set-Cookie:
+              description: New HttpOnly `access_token` and `refresh_token` cookies.
+              schema:
+                type: string
+        '401':
+          description: Refresh token invalid or already used (chain revoked).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                invalid:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 401
+                    error: REFRESH_TOKEN_INVALID
+                    message: Refresh token is invalid
+                    path: /api/auth/refresh
+                    details: []
+                reused:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 401
+                    error: REFRESH_TOKEN_REUSED
+                    message: Refresh token has already been used
+                    path: /api/auth/refresh
+                    details: []
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Log out
+      description: Revokes the current refresh token and clears cookies. No body.
+      operationId: logout
+      responses:
+        '204':
+          description: Logged out. Cookies cleared.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /users/me:
+    get:
+      tags: [Users]
+      summary: Get the current user
+      operationId: getCurrentUser
+      responses:
+        '200':
+          description: The authenticated user's profile.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMeResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    patch:
+      tags: [Users]
+      summary: Update the current user
+      description: Partial update. All fields are optional.
+      operationId: updateCurrentUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UserUpdateRequest'
+      responses:
+        '200':
+          description: Updated user object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UserMeResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Username already taken.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /users/me/password:
+    post:
+      tags: [Users]
+      summary: Change the current user's password
+      description: Revokes all other refresh tokens on success.
+      operationId: changePassword
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ChangePasswordRequest'
+      responses:
+        '204':
+          description: Password changed. Other refresh tokens revoked.
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /events:
+    post:
+      tags: [Events]
+      summary: Create an event
+      description: |
+        The caller is automatically added to `event_organizer` as `CREATOR`.
+      operationId: createEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventCreateRequest'
+      responses:
+        '201':
+          description: Event created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [Events]
+      summary: List public events
+      description: Public. Lists events where `isPublic = true`.
+      operationId: listEvents
+      security: []
+      parameters:
+        - name: q
+          in: query
+          description: Title search.
+          schema:
+            type: string
+        - name: from
+          in: query
+          description: Filter on `startTime` (inclusive lower bound).
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: Filter on `startTime` (inclusive upper bound).
+          schema:
+            type: string
+            format: date-time
+        - name: status
+          in: query
+          description: Event status filter.
+          schema:
+            $ref: '#/components/schemas/EventStatus'
+            default: OK
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+        - name: sort
+          in: query
+          description: Sort expression, e.g. `startTime,asc`.
+          schema:
+            type: string
+            default: startTime,asc
+      responses:
+        '200':
+          description: Paginated list of public events.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageEventSummary'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /events/{eventId}:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    get:
+      tags: [Events]
+      summary: Get an event
+      description: |
+        Public for public events. Private events are visible only to organizers
+        and ticket holders; anyone else receives `404` so existence is not leaked.
+      operationId: getEvent
+      security:
+        - {}
+        - access_token: []
+      responses:
+        '200':
+          description: Full event details.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetail'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Events]
+      summary: Update an event
+      description: Organizers only (`CREATOR` or `ADMIN`). Partial update.
+      operationId: updateEvent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EventUpdateRequest'
+      responses:
+        '200':
+          description: Updated event object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetail'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Events]
+      summary: Delete an event
+      description: |
+        `CREATOR` only. Allowed only if no tickets exist; otherwise `409`
+        (use cancel instead).
+      operationId: deleteEvent
+      responses:
+        '204':
+          description: Event deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Tickets exist for this event; cancel it instead.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /events/{eventId}/cancel:
+    post:
+      tags: [Events]
+      summary: Cancel an event
+      description: |
+        Organizers only. Sets `status = CANCELLED`. No body.
+
+        Side effect is an open decision: tickets either stay `VALID` until
+        refunded or are bulk-marked `REFUNDED`. Either way, check-in rejects
+        tickets of a `CANCELLED` event.
+      operationId: cancelEvent
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+      responses:
+        '200':
+          description: Cancelled event object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /events/{eventId}/organizers:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    get:
+      tags: [Organizers]
+      summary: List event organizers
+      description: Organizers only.
+      operationId: listOrganizers
+      responses:
+        '200':
+          description: Organizers of the event.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Organizer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Organizers]
+      summary: Add an organizer
+      description: |
+        `CREATOR` only. Adds an `ADMIN`. Provide either `username` or `email`.
+      operationId: addOrganizer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddOrganizerRequest'
+      responses:
+        '201':
+          description: Organizer added with role `ADMIN`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Organizer'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          description: User not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: User is already an organizer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /events/{eventId}/organizers/{organizerId}:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+      - $ref: '#/components/parameters/OrganizerIdParam'
+    delete:
+      tags: [Organizers]
+      summary: Remove an organizer
+      description: |
+        `CREATOR` only. The `CREATOR` row cannot be removed (`409`).
+      operationId: removeOrganizer
+      responses:
+        '204':
+          description: Organizer removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: The `CREATOR` row cannot be removed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /events/{eventId}/tiers:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    get:
+      tags: [Tiers]
+      summary: List ticket tiers for an event
+      description: |
+        Same visibility rules as the event. Private events are visible only to
+        organizers and ticket holders; anyone else receives `404`.
+      operationId: listTiers
+      security:
+        - {}
+        - access_token: []
+      responses:
+        '200':
+          description: Tiers of the event.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tier'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Tiers]
+      summary: Create a ticket tier
+      description: Organizers only.
+      operationId: createTier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TierCreateRequest'
+      responses:
+        '201':
+          description: Tier created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tier'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Tier name already used for this event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tiers/{tierId}:
+    parameters:
+      - $ref: '#/components/parameters/TierIdParam'
+    patch:
+      tags: [Tiers]
+      summary: Update a ticket tier
+      description: |
+        Organizers only. The event id is resolved from the tier.
+
+        `capacity` cannot go below the number of tickets already issued (`409`).
+        Price changes do not affect existing tickets (`price_paid` is frozen).
+      operationId: updateTier
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TierUpdateRequest'
+      responses:
+        '200':
+          description: Updated tier object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tier'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Capacity below the number of tickets already issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Tiers]
+      summary: Delete a ticket tier
+      description: Organizers only. Only if no tickets exist for the tier (`409` otherwise).
+      operationId: deleteTier
+      responses:
+        '204':
+          description: Tier deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Tickets exist for this tier.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tiers/{tierId}/tickets:
+    post:
+      tags: [Tickets]
+      summary: Issue a ticket to the caller
+      description: |
+        Issues a ticket to the authenticated caller. Runs in one transaction with
+        a row lock on the tier (no overselling). No body required.
+      operationId: issueTicket
+      parameters:
+        - $ref: '#/components/parameters/TierIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '201':
+          description: Ticket issued.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Sold out, or the event is not open.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                soldOut:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: SOLD_OUT
+                    message: No tickets remaining
+                    path: /api/tiers/a1b2c3d4-0000-4000-8000-000000000001/tickets
+                    details: []
+                eventNotOpen:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: EVENT_NOT_OPEN
+                    message: Event is cancelled or has already ended
+                    path: /api/tiers/a1b2c3d4-0000-4000-8000-000000000001/tickets
+                    details: []
+
+  /tickets/me:
+    get:
+      tags: [Tickets]
+      summary: List the caller's tickets
+      operationId: listMyTickets
+      parameters:
+        - name: status
+          in: query
+          description: Filter by ticket status.
+          schema:
+            $ref: '#/components/schemas/TicketStatus'
+        - name: upcoming
+          in: query
+          description: Only tickets for events that have not started yet.
+          schema:
+            type: boolean
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Paginated list of the caller's tickets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageTicket'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /tickets/{ticketId}:
+    parameters:
+      - $ref: '#/components/parameters/TicketIdParam'
+    get:
+      tags: [Tickets]
+      summary: Get a ticket
+      description: |
+        Allowed for the owner or any organizer of the ticket's event. The event id
+        is resolved from ticket → tier. For organizers the response also includes
+        `owner` and `checkedBy`.
+      operationId: getTicket
+      responses:
+        '200':
+          description: Ticket object, plus `owner` and `checkedBy` for organizers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TicketDetail'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /tickets/{ticketId}/check-in:
+    post:
+      tags: [Tickets]
+      summary: Check in a ticket
+      description: |
+        Organizers of the ticket's event only. Called after scanning the QR code,
+        which encodes the ticket id only. Atomic
+        (`UPDATE ... WHERE ticket_status = 'VALID'`).
+
+        The event is always resolved from the ticket (ticket → tier →
+        `id_event`), never from a client-supplied event id: an organizer of event A
+        must not be able to scan a ticket of event B. No body required.
+      operationId: checkInTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '200':
+          description: Ticket checked in.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckInResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Scanner is not an organizer of this event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notAnOrganizer:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 403
+                    error: NOT_AN_ORGANIZER
+                    message: Caller is not an organizer of this event
+                    path: /api/tickets/7d9e1f2a-4b3c-4d5e-8f6a-1b2c3d4e5f60/check-in
+                    details: []
+        '404':
+          description: Unknown ticket id.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                ticketNotFound:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 404
+                    error: TICKET_NOT_FOUND
+                    message: Ticket not found
+                    path: /api/tickets/7d9e1f2a-4b3c-4d5e-8f6a-1b2c3d4e5f60/check-in
+                    details: []
+        '409':
+          description: Ticket already used, not valid, or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                alreadyUsed:
+                  summary: Includes `checkedInAt` in the error `details`.
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: TICKET_ALREADY_USED
+                    message: Ticket has already been used
+                    path: /api/tickets/7d9e1f2a-4b3c-4d5e-8f6a-1b2c3d4e5f60/check-in
+                    details:
+                      - field: checkedInAt
+                        message: '2026-11-20T18:05:12Z'
+                notValid:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: TICKET_NOT_VALID
+                    message: Ticket is cancelled or refunded
+                    path: /api/tickets/7d9e1f2a-4b3c-4d5e-8f6a-1b2c3d4e5f60/check-in
+                    details: []
+                expired:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: TICKET_EXPIRED
+                    message: Ticket is past its validUntil time
+                    path: /api/tickets/7d9e1f2a-4b3c-4d5e-8f6a-1b2c3d4e5f60/check-in
+                    details: []
+
+  /tickets/{ticketId}/cancel:
+    post:
+      tags: [Tickets]
+      summary: Cancel a ticket
+      description: |
+        Owner cancels their own `VALID` ticket, which frees capacity. No body
+        required.
+      operationId: cancelTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+      responses:
+        '200':
+          description: Cancelled ticket object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Ticket already used or not valid.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /tickets/{ticketId}/refund:
+    post:
+      tags: [Tickets]
+      summary: Refund a ticket
+      description: |
+        Organizers only. Marks a ticket `REFUNDED`. The event id is resolved from
+        the ticket. `reason` is optional and is not stored by the current schema.
+      operationId: refundTicket
+      parameters:
+        - $ref: '#/components/parameters/TicketIdParam'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefundRequest'
+      responses:
+        '200':
+          description: Refunded ticket object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ticket'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+  /events/{eventId}/tickets:
+    get:
+      tags: [Tickets]
+      summary: List attendees for an event
+      description: Organizers only. Attendee list.
+      operationId: listEventTickets
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+        - name: status
+          in: query
+          description: Filter by ticket status.
+          schema:
+            $ref: '#/components/schemas/TicketStatus'
+        - name: tierId
+          in: query
+          description: Filter by ticket tier.
+          schema:
+            type: string
+            format: uuid
+        - name: q
+          in: query
+          description: Search by attendee name or username.
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Paginated attendee list.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageAttendeeTicket'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /events/{eventId}/stats:
+    get:
+      tags: [Stats]
+      summary: Get event statistics
+      description: Organizers only.
+      operationId: getEventStats
+      parameters:
+        - $ref: '#/components/parameters/EventIdParam'
+      responses:
+        '200':
+          description: Sales and attendance statistics.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EventStats'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+components:
+  securitySchemes:
+    access_token:
+      type: apiKey
+      in: cookie
+      name: access_token
+      description: |
+        JWT access token sent as an `HttpOnly` cookie. Required by all endpoints
+        except those explicitly marked public or optional.
+    refresh_token:
+      type: apiKey
+      in: cookie
+      name: refresh_token
+      description: |
+        Refresh token sent as an `HttpOnly` cookie. Used only by
+        `POST /auth/refresh`.
+
+  parameters:
+    PageParam:
+      name: page
+      in: query
+      description: Zero-based page index.
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    SizeParam:
+      name: size
+      in: query
+      description: Page size.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 20
+    EventIdParam:
+      name: eventId
+      in: path
+      required: true
+      description: Event UUID.
+      schema:
+        type: string
+        format: uuid
+    TierIdParam:
+      name: tierId
+      in: path
+      required: true
+      description: Ticket tier UUID.
+      schema:
+        type: string
+        format: uuid
+    TicketIdParam:
+      name: ticketId
+      in: path
+      required: true
+      description: Ticket UUID (the value encoded in the QR code).
+      schema:
+        type: string
+        format: uuid
+    OrganizerIdParam:
+      name: organizerId
+      in: path
+      required: true
+      description: Event organizer row UUID (not the user id).
+      schema:
+        type: string
+        format: uuid
+
+  responses:
+    BadRequest:
+      description: Validation error or malformed body.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            timestamp: '2026-10-05T10:00:00Z'
+            status: 400
+            error: VALIDATION_ERROR
+            message: Validation failed
+            path: /api/events
+            details:
+              - field: endTime
+                message: must be after startTime
+    Unauthorized:
+      description: Missing, expired or invalid access token.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Forbidden:
+      description: |
+        Authenticated but not allowed (e.g. not an organizer of the resolved
+        event).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            notAnOrganizer:
+              value:
+                timestamp: '2026-10-05T10:00:00Z'
+                status: 403
+                error: NOT_AN_ORGANIZER
+                message: Caller is not an organizer of this event
+                path: /api/events/5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b
+                details: []
+            notTheCreator:
+              value:
+                timestamp: '2026-10-05T10:00:00Z'
+                status: 403
+                error: NOT_THE_CREATOR
+                message: Caller is not the creator of this event
+                path: /api/events/5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b
+                details: []
+    NotFound:
+      description: Resource not found (also used to hide private events).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    Conflict:
+      description: Conflict (duplicate email/username, sold out, ticket already used).
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+
+  schemas:
+    # ------------------------------------------------------------------ errors
+    ErrorDetail:
+      type: object
+      properties:
+        field:
+          type: string
+        message:
+          type: string
+
+    Error:
+      type: object
+      required: [timestamp, status, error, message, path]
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        status:
+          type: integer
+        error:
+          type: string
+          description: Machine-readable error code, e.g. `VALIDATION_ERROR`.
+        message:
+          type: string
+        path:
+          type: string
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ErrorDetail'
+
+    # ------------------------------------------------------------- pagination
+    PageMeta:
+      type: object
+      required: [page, size, totalElements, totalPages]
+      properties:
+        page:
+          type: integer
+          minimum: 0
+        size:
+          type: integer
+          minimum: 0
+        totalElements:
+          type: integer
+          format: int64
+          minimum: 0
+        totalPages:
+          type: integer
+          minimum: 0
+
+    PageEventSummary:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [content]
+          properties:
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/EventSummary'
+
+    PageTicket:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [content]
+          properties:
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/Ticket'
+
+    PageAttendeeTicket:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [content]
+          properties:
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/AttendeeTicket'
+
+    # ------------------------------------------------------------------- auth
+    RegisterRequest:
+      type: object
+      required: [email, password, fullName, username]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+        fullName:
+          type: string
+        username:
+          type: string
+        dateBirth:
+          type: string
+          format: date
+          description: Optional.
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+
+    ChangePasswordRequest:
+      type: object
+      required: [currentPassword, newPassword]
+      properties:
+        currentPassword:
+          type: string
+          format: password
+        newPassword:
+          type: string
+          format: password
+
+    # ------------------------------------------------------------------ users
+    UserResponse:
+      type: object
+      required: [id, email, fullName, username, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+        fullName:
+          type: string
+        username:
+          type: string
+        dateBirth:
+          oneOf:
+            - type: string
+              format: date
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+      description: User object returned by register/login.
+
+    UserMeResponse:
+      allOf:
+        - $ref: '#/components/schemas/UserResponse'
+        - type: object
+          required: [updatedAt]
+          properties:
+            updatedAt:
+              type: string
+              format: date-time
+
+    UserUpdateRequest:
+      type: object
+      description: Partial update. All fields optional.
+      properties:
+        fullName:
+          type: string
+        username:
+          type: string
+        dateBirth:
+          type: string
+          format: date
+
+    # ----------------------------------------------------------------- events
+    EventStatus:
+      type: string
+      enum: [OK, CANCELLED, POSTPONED]
+
+    EventRole:
+      type: string
+      enum: [CREATOR, ADMIN]
+
+    EventCreateRequest:
+      type: object
+      required: [title, startTime, endTime]
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        isPublic:
+          type: boolean
+          default: true
+        location:
+          type: string
+
+    EventUpdateRequest:
+      type: object
+      description: Partial update.
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        isPublic:
+          type: boolean
+        location:
+          type: string
+        status:
+          $ref: '#/components/schemas/EventStatus'
+
+    EventSummary:
+      type: object
+      required: [id, title, startTime, endTime, status]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        location:
+          oneOf:
+            - type: string
+            - type: 'null'
+        status:
+          $ref: '#/components/schemas/EventStatus'
+        minPrice:
+          type: number
+          format: double
+          minimum: 0
+          description: Lowest price across the event's tiers, 2 decimals.
+
+    EventDetail:
+      type: object
+      required: [id, title, startTime, endTime, isPublic, status, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        description:
+          oneOf:
+            - type: string
+            - type: 'null'
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        isPublic:
+          type: boolean
+        location:
+          oneOf:
+            - type: string
+            - type: 'null'
+        status:
+          $ref: '#/components/schemas/EventStatus'
+        myRole:
+          description: |
+            Caller's role on this event, or `null` for anonymous callers and
+            non-organizers.
+          oneOf:
+            - $ref: '#/components/schemas/EventRole'
+            - type: 'null'
+        tiers:
+          type: array
+          items:
+            $ref: '#/components/schemas/TierSummary'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    # ------------------------------------------------------------ organizers
+    Organizer:
+      type: object
+      required: [id, userId, username, fullName, eventRole]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The `event_organizer` row id.
+        userId:
+          type: string
+          format: uuid
+        username:
+          type: string
+        fullName:
+          type: string
+        eventRole:
+          $ref: '#/components/schemas/EventRole'
+
+    AddOrganizerRequest:
+      type: object
+      description: Provide either `username` or `email`.
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+      oneOf:
+        - required: [username]
+        - required: [email]
+
+    # ------------------------------------------------------------------ tiers
+    TierSummary:
+      type: object
+      required: [id, tierName, price, capacity, remaining]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tierName:
+          type: string
+        price:
+          type: number
+          format: double
+          minimum: 0
+        capacity:
+          type: integer
+          minimum: 0
+        remaining:
+          type: integer
+          minimum: 0
+          description: |
+            `capacity` minus tickets in `VALID` or `USED`.
+
+    Tier:
+      allOf:
+        - $ref: '#/components/schemas/TierSummary'
+        - type: object
+          required: [eventId]
+          properties:
+            eventId:
+              type: string
+              format: uuid
+
+    TierCreateRequest:
+      type: object
+      required: [tierName, price, capacity]
+      properties:
+        tierName:
+          type: string
+        price:
+          type: number
+          format: double
+          minimum: 0
+        capacity:
+          type: integer
+          minimum: 0
+
+    TierUpdateRequest:
+      type: object
+      description: Partial update.
+      properties:
+        tierName:
+          type: string
+        price:
+          type: number
+          format: double
+          minimum: 0
+        capacity:
+          type: integer
+          minimum: 0
+
+    # ---------------------------------------------------------------- tickets
+    TicketStatus:
+      type: string
+      enum: [VALID, USED, CANCELLED, REFUNDED]
+
+    TicketOwner:
+      type: object
+      required: [id, fullName, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        username:
+          type: string
+
+    TicketEventRef:
+      type: object
+      required: [id, title, startTime]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        location:
+          oneOf:
+            - type: string
+            - type: 'null'
+
+    TicketTierRef:
+      type: object
+      required: [id, tierName]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tierName:
+          type: string
+
+    CheckedBy:
+      type: object
+      required: [id, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+
+    Ticket:
+      type: object
+      required: [id, event, tier, pricePaid, ticketStatus, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The value encoded in the QR code.
+        event:
+          $ref: '#/components/schemas/TicketEventRef'
+        tier:
+          $ref: '#/components/schemas/TicketTierRef'
+        pricePaid:
+          type: number
+          format: double
+          minimum: 0
+          description: Frozen at issue time; later price changes do not affect it.
+        ticketStatus:
+          $ref: '#/components/schemas/TicketStatus'
+        checkedInAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        validUntil:
+          description: Nullable; defaults to the event's `endTime` at issue time.
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+
+    TicketDetail:
+      allOf:
+        - $ref: '#/components/schemas/Ticket'
+        - type: object
+          description: Extra fields returned when the caller is an organizer.
+          properties:
+            owner:
+              $ref: '#/components/schemas/TicketOwner'
+            checkedBy:
+              oneOf:
+                - $ref: '#/components/schemas/CheckedBy'
+                - type: 'null'
+
+    AttendeeTicket:
+      type: object
+      required: [id, owner, tier, pricePaid, ticketStatus, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        owner:
+          $ref: '#/components/schemas/TicketOwner'
+        tier:
+          $ref: '#/components/schemas/TicketTierRef'
+        pricePaid:
+          type: number
+          format: double
+          minimum: 0
+        ticketStatus:
+          $ref: '#/components/schemas/TicketStatus'
+        checkedInAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+
+    CheckInResponse:
+      type: object
+      required: [id, ticketStatus, checkedInAt, checkedBy, owner, tier]
+      properties:
+        id:
+          type: string
+          format: uuid
+        ticketStatus:
+          $ref: '#/components/schemas/TicketStatus'
+        checkedInAt:
+          type: string
+          format: date-time
+        checkedBy:
+          $ref: '#/components/schemas/CheckedBy'
+        owner:
+          type: object
+          required: [fullName, username]
+          properties:
+            fullName:
+              type: string
+            username:
+              type: string
+        tier:
+          type: object
+          required: [tierName]
+          properties:
+            tierName:
+              type: string
+
+    RefundRequest:
+      type: object
+      properties:
+        reason:
+          type: string
+          description: Optional and not stored by the current schema.
+
+    # ------------------------------------------------------------------ stats
+    EventStats:
+      type: object
+      required: [eventId, totalCapacity, ticketsIssued, ticketsCheckedIn, revenue, byTier]
+      properties:
+        eventId:
+          type: string
+          format: uuid
+        totalCapacity:
+          type: integer
+          minimum: 0
+        ticketsIssued:
+          type: integer
+          minimum: 0
+        ticketsCheckedIn:
+          type: integer
+          minimum: 0
+        revenue:
+          type: number
+          format: double
+          minimum: 0
+        byTier:
+          type: array
+          items:
+            $ref: '#/components/schemas/TierStats'
+
+    TierStats:
+      type: object
+      required: [tierId, tierName, issued, checkedIn, revenue]
+      properties:
+        tierId:
+          type: string
+          format: uuid
+        tierName:
+          type: string
+        issued:
+          type: integer
+          minimum: 0
+        checkedIn:
+          type: integer
+          minimum: 0
+        revenue:
+          type: number
+          format: double
+          minimum: 0
