@@ -13,6 +13,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -35,6 +36,13 @@ public class EventController {
             @RequestBody EventCreateRequest request) {
         EventDetail created = eventService.createEvent(principal.getId(), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+
+    @GetMapping("/{eventId}")
+    public ResponseEntity<EventDetail> getEvent(@AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId) {
+        UUID userId = principal == null ? null : principal.getId();
+        return ResponseEntity.ok(eventService.getEvent(eventId, userId));
     }
 
     @GetMapping

@@ -16,17 +16,23 @@ import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
 import mg.improve.attend.domain.dto.response.EventSummary;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
+import mg.improve.attend.domain.dto.response.TierSummary;
 import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
+import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.EventsMapper;
+import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
+import mg.improve.attend.exceptions.UnauthorizedException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
 import mg.improve.attend.repository.entities.JEventOrganizer;
 import mg.improve.attend.repository.entities.JEvents;
+import mg.improve.attend.repository.entities.JTicketTier;
 import mg.improve.attend.repository.entities.JUsers;
 import mg.improve.attend.validator.EventValidator;
 import org.springframework.data.domain.Page;
@@ -48,6 +54,7 @@ public class EventService {
     private final JEventsRepository events;
     private final JEventOrganizerRepository organizers;
     private final JTicketTierRepository tiers;
+    private final JTicketRepository tickets;
     private final JUsersRepository users;
     private final EventsMapper eventsMapper;
     private final EventValidator validator;
@@ -83,6 +90,55 @@ public class EventService {
 
         Events domain = eventsMapper.toDomain(saved);
         return EventDetail.from(domain, EventRole.CREATOR, List.of());
+    }
+
+    /**
+     * Event detail. Public events are visible to everyone; private events only to their
+     * organizers. Anonymous callers get {@code 401} for a private event, authenticated
+     * non-organizers get {@code 403}.
+     */
+    @Transactional(readOnly = true)
+    public EventDetail getEvent(UUID eventId, UUID userId) {
+        JEvents event = events.findById(eventId)
+                .orElseThrow(() -> new NotFoundException("EVENT_NOT_FOUND", "Event not found"));
+
+        EventRole myRole = userId == null ? null
+                : organizers.findByEvent_IdAndUser_Id(eventId, userId)
+                        .map(JEventOrganizer::getEventRole)
+                        .orElse(null);
+
+        if (!event.isPublic()) {
+            if (userId == null) {
+                throw new UnauthorizedException("UNAUTHORIZED", "Authentication required");
+            }
+            if (myRole == null) {
+                throw new ForbiddenException("NOT_AN_ORGANIZER", "Caller is not an organizer of this event");
+            }
+        }
+
+        return EventDetail.from(eventsMapper.toDomain(event), myRole, tiersFor(eventId));
+    }
+
+    private List<TierSummary> tiersFor(UUID eventId) {
+        List<JTicketTier> eventTiers = tiers.findByEvent_Id(eventId);
+        if (eventTiers.isEmpty()) {
+            return List.of();
+        }
+        Map<UUID, Long> issuedByTier = tickets
+                .countIssuedByTier(eventId, List.of(TicketStatus.VALID, TicketStatus.USED))
+                .stream()
+                .collect(Collectors.toMap(
+                        JTicketRepository.TierIssued::getTierId,
+                        JTicketRepository.TierIssued::getIssued));
+
+        return eventTiers.stream()
+                .map(tier -> {
+                    long issued = issuedByTier.getOrDefault(tier.getId(), 0L);
+                    int remaining = Math.max(0, tier.getCapacity() - (int) issued);
+                    return new TierSummary(tier.getId(), tier.getTierName(), tier.getPrice(),
+                            tier.getCapacity(), remaining);
+                })
+                .toList();
     }
 
     /**

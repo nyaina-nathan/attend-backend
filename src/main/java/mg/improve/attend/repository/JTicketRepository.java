@@ -1,6 +1,9 @@
 package mg.improve.attend.repository;
 
+import java.util.Collection;
+import java.util.List;
 import java.util.UUID;
+import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.repository.entities.JTicket;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
@@ -8,6 +11,21 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
+
+    /**
+     * Number of tickets issued per tier for an event, counting only the statuses that consume
+     * capacity ({@code VALID}, {@code USED}).
+     */
+    @Query("select t.tier.id as tierId, count(t) as issued from JTicket t "
+            + "where t.tier.event.id = :eventId and t.ticketStatus in :statuses group by t.tier.id")
+    List<TierIssued> countIssuedByTier(@Param("eventId") UUID eventId,
+            @Param("statuses") Collection<TicketStatus> statuses);
+
+    interface TierIssued {
+        UUID getTierId();
+
+        long getIssued();
+    }
 
     @Modifying
     @Query("delete from JTicket t where t.owner.id = :userId")

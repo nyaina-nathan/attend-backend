@@ -12,6 +12,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface JTicketTierRepository extends JpaRepository<JTicketTier, UUID> {
 
+    List<JTicketTier> findByEvent_Id(UUID eventId);
+
     @Modifying
     @Query("delete from JTicketTier t where t.event.id = :eventId")
     void deleteByEventId(@Param("eventId") UUID eventId);
