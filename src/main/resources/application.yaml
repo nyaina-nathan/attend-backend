@@ -26,3 +26,9 @@ spring:
         jdbc:
           time_zone: UTC
     show-sql: ${JPA_SHOW_SQL:false}
+
+  jwt:
+    secret : ${jWT_SECRET}
+    expiration : 
+      access : ${JWT_EXPIRATION_ACCESS}
+      refresh: ${JWT_EXPIRATION_REFRESH}
