@@ -21,6 +21,8 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
     List<TierIssued> countIssuedByTier(@Param("eventId") UUID eventId,
             @Param("statuses") Collection<TicketStatus> statuses);
 
+    boolean existsByTier_Event_Id(UUID eventId);
+
     interface TierIssued {
         UUID getTierId();
 

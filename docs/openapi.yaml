@@ -419,7 +419,7 @@ paths:
     patch:
       tags: [Events]
       summary: Update an event
-      description: Organizers only (`CREATOR` or `ADMIN`). Partial update.
+      description: '`CREATOR` only. Partial update.'
       operationId: updateEvent
       requestBody:
         required: true
@@ -459,7 +459,7 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
         '409':
-          description: Tickets exist for this event; cancel it instead.
+          description: '`EVENT_HAS_TICKETS`: tickets exist for this event; cancel it instead.'
           content:
             application/json:
               schema:
@@ -470,11 +470,8 @@ paths:
       tags: [Events]
       summary: Cancel an event
       description: |
-        Organizers only. Sets `status = CANCELLED`. No body.
-
-        Side effect is an open decision: tickets either stay `VALID` until
-        refunded or are bulk-marked `REFUNDED`. Either way, check-in rejects
-        tickets of a `CANCELLED` event.
+        Creator only (`CREATOR`). Sets `status = CANCELLED`. No body. Tickets are
+        left untouched; check-in rejects tickets of a `CANCELLED` event.
       operationId: cancelEvent
       parameters:
         - $ref: '#/components/parameters/EventIdParam'

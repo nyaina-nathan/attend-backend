@@ -14,6 +14,8 @@ public interface JEventOrganizerRepository extends JpaRepository<JEventOrganizer
 
     Optional<JEventOrganizer> findByEvent_IdAndUser_Id(UUID eventId, UUID userId);
 
+    boolean existsByEvent_IdAndUser_IdAndEventRole(UUID eventId, UUID userId, EventRole eventRole);
+
     @Query("select o.event.id from JEventOrganizer o where o.user.id = :userId and o.eventRole = :eventRole")
     List<UUID> findEventIdsByUserAndRole(@Param("userId") UUID userId, @Param("eventRole") EventRole eventRole);
 

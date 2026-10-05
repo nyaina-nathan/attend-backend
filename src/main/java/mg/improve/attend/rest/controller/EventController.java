@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
+import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.enums.EventStatus;
@@ -12,7 +13,9 @@ import mg.improve.attend.service.EventService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
@@ -43,6 +46,25 @@ public class EventController {
             @PathVariable UUID eventId) {
         UUID userId = principal == null ? null : principal.getId();
         return ResponseEntity.ok(eventService.getEvent(eventId, userId));
+    }
+
+    @PatchMapping("/{eventId}")
+    public ResponseEntity<EventDetail> updateEvent(@AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId, @RequestBody EventUpdateRequest request) {
+        return ResponseEntity.ok(eventService.updateEvent(eventId, principal.getId(), request));
+    }
+
+    @DeleteMapping("/{eventId}")
+    public ResponseEntity<Void> deleteEvent(@AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId) {
+        eventService.deleteEvent(eventId, principal.getId());
+        return ResponseEntity.noContent().build();
+    }
+
+    @PostMapping("/{eventId}/cancel")
+    public ResponseEntity<EventDetail> cancelEvent(@AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId) {
+        return ResponseEntity.ok(eventService.cancelEvent(eventId, principal.getId()));
     }
 
     @GetMapping
