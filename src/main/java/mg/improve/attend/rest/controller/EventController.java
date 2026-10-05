@@ -1,6 +1,7 @@
 package mg.improve.attend.rest.controller;
 
 import java.time.Instant;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
@@ -38,13 +39,18 @@ public class EventController {
 
     @GetMapping
     public ResponseEntity<PageEventSummary> listEvents(
+            @AuthenticationPrincipal CustomUserDetails principal,
             @RequestParam(name = "q", required = false) String q,
             @RequestParam(name = "from", required = false) Instant from,
             @RequestParam(name = "to", required = false) Instant to,
             @RequestParam(name = "status", defaultValue = "OK") EventStatus status,
+            @RequestParam(name = "isMine", defaultValue = "false") boolean isMine,
+            @RequestParam(name = "isPublic", required = false) Boolean isPublic,
             @RequestParam(name = "page", defaultValue = "0") int page,
             @RequestParam(name = "size", defaultValue = "20") int size,
             @RequestParam(name = "sort", defaultValue = "startTime,asc") String sort) {
-        return ResponseEntity.ok(eventService.listEvents(q, from, to, status, page, size, sort));
+        UUID userId = principal == null ? null : principal.getId();
+        return ResponseEntity.ok(
+                eventService.listEvents(q, from, to, status, isMine, isPublic, userId, page, size, sort));
     }
 }

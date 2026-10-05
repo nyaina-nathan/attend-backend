@@ -1,6 +1,8 @@
 package mg.improve.attend.service;
 
 import jakarta.persistence.criteria.Predicate;
+import jakarta.persistence.criteria.Root;
+import jakarta.persistence.criteria.Subquery;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -84,16 +86,17 @@ public class EventService {
     }
 
     /**
-     * Public discovery. Lists {@code isPublic = true} events filtered by title, start-time
-     * bounds and status, with the requested page and sort.
+     * Event discovery. Anonymous callers see {@code isPublic = true} events. An authenticated
+     * caller may pass {@code isMine = true} to see only the events they organize, optionally
+     * narrowed by {@code isPublic} (e.g. {@code isMine=true&isPublic=false} for private ones).
      */
     @Transactional(readOnly = true)
     public PageEventSummary listEvents(String q, Instant from, Instant to, EventStatus status,
-            int page, int size, String sort) {
+            boolean isMine, Boolean isPublic, UUID userId, int page, int size, String sort) {
         Sort resolvedSort = validator.validateListQuery(page, size, sort);
         Pageable pageable = PageRequest.of(page, size, resolvedSort);
 
-        Page<JEvents> eventsPage = events.findAll(publicFilter(q, from, to, status), pageable);
+        Page<JEvents> eventsPage = events.findAll(filter(q, from, to, status, isMine, isPublic, userId), pageable);
         Map<UUID, BigDecimal> minPrices = minPricesByEvent(eventsPage.getContent());
         List<EventSummary> content = eventsPage.getContent().stream()
                 .map(entity -> EventSummary.from(eventsMapper.toDomain(entity), minPrices.get(entity.getId())))
@@ -107,11 +110,28 @@ public class EventService {
                 content);
     }
 
-    private static Specification<JEvents> publicFilter(String q, Instant from, Instant to, EventStatus status) {
+    private static Specification<JEvents> filter(String q, Instant from, Instant to, EventStatus status,
+            boolean isMine, Boolean isPublic, UUID userId) {
+        // Anonymous callers cannot have "mine" events, so they fall back to the public list.
+        boolean mine = isMine && userId != null;
         return (root, query, cb) -> {
             List<Predicate> predicates = new ArrayList<>();
-            predicates.add(cb.isTrue(root.get("isPublic")));
             predicates.add(cb.equal(root.get("status"), status));
+
+            if (mine) {
+                Subquery<UUID> organizerExists = query.subquery(UUID.class);
+                Root<JEventOrganizer> organizer = organizerExists.from(JEventOrganizer.class);
+                organizerExists.select(organizer.get("event").get("id"))
+                        .where(cb.equal(organizer.get("event").get("id"), root.get("id")),
+                                cb.equal(organizer.get("user").get("id"), userId));
+                predicates.add(cb.exists(organizerExists));
+                if (isPublic != null) {
+                    predicates.add(cb.equal(root.get("isPublic"), isPublic));
+                }
+            } else {
+                predicates.add(cb.isTrue(root.get("isPublic")));
+            }
+
             if (q != null && !q.isBlank()) {
                 predicates.add(cb.like(cb.lower(root.get("title")), "%" + q.toLowerCase(Locale.ROOT) + "%"));
             }
