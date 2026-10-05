@@ -42,6 +42,16 @@ public class AuthCookieFactory {
         return headers;
     }
 
+    /**
+     * Builds the {@code Set-Cookie} headers that delete both auth cookies.
+     */
+    public HttpHeaders clearHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.add(HttpHeaders.SET_COOKIE, expire(ACCESS_TOKEN_COOKIE, ACCESS_TOKEN_PATH).toString());
+        headers.add(HttpHeaders.SET_COOKIE, expire(REFRESH_TOKEN_COOKIE, REFRESH_TOKEN_PATH).toString());
+        return headers;
+    }
+
     private ResponseCookie build(String name, IssuedToken token, String path) {
         Duration maxAge = Duration.between(Instant.now(), token.expiresAt());
         if (maxAge.isNegative()) {
@@ -53,6 +63,16 @@ public class AuthCookieFactory {
                 .sameSite(properties.sameSite())
                 .path(path)
                 .maxAge(maxAge)
+                .build();
+    }
+
+    private ResponseCookie expire(String name, String path) {
+        return ResponseCookie.from(name, "")
+                .httpOnly(true)
+                .secure(properties.secure())
+                .sameSite(properties.sameSite())
+                .path(path)
+                .maxAge(Duration.ZERO)
                 .build();
     }
 }

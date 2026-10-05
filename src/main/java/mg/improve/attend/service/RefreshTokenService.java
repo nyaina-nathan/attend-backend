@@ -56,7 +56,7 @@ public class RefreshTokenService {
                 .orElseThrow(RefreshTokenService::invalid);
 
         if (token.getRevokedAt() != null) {
-            revokeChain(token);
+            revokeChainFrom(token);
             throw new UnauthorizedException("REFRESH_TOKEN_REUSED", "Refresh token has already been used");
         }
 
@@ -70,6 +70,20 @@ public class RefreshTokenService {
         }
 
         return new SessionTokens(accessToken, null);
+    }
+
+    /**
+     * Logs the caller out by revoking the refresh token they present, together with any token
+     * it was replaced by. Idempotent: a missing, unknown, foreign or already-revoked token is
+     * simply ignored, because the cookies are cleared regardless.
+     */
+    @Transactional
+    public void logout(UUID userId, HttpServletRequest httpRequest) {
+        cookieResolver.resolve(httpRequest)
+                .map(jwtService::hashRefreshToken)
+                .flatMap(refreshTokens::findByTokenHashForUpdate)
+                .filter(token -> token.getUser().getId().equals(userId))
+                .ifPresent(this::revokeChainFrom);
     }
 
     private boolean isNearExpiry(Instant expiresAt) {
@@ -92,10 +106,10 @@ public class RefreshTokenService {
         current.setReplacedBy(savedReplacement);
     }
 
-    private void revokeChain(JRefreshToken revoked) {
+    private void revokeChainFrom(JRefreshToken start) {
         Instant now = Instant.now();
         Set<UUID> visited = new HashSet<>();
-        JRefreshToken cursor = revoked.getReplacedBy();
+        JRefreshToken cursor = start;
         while (cursor != null && visited.add(cursor.getId())) {
             if (cursor.getRevokedAt() == null) {
                 cursor.setRevokedAt(now);

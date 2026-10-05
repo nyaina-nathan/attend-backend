@@ -6,12 +6,14 @@ import mg.improve.attend.domain.dto.request.LoginRequest;
 import mg.improve.attend.domain.dto.request.RegisterRequest;
 import mg.improve.attend.domain.dto.response.UserResponse;
 import mg.improve.attend.security.AuthCookieFactory;
+import mg.improve.attend.security.CustomUserDetails;
 import mg.improve.attend.service.AuthResult;
 import mg.improve.attend.service.AuthService;
 import mg.improve.attend.service.RefreshTokenService;
 import mg.improve.attend.service.SessionTokens;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -53,6 +55,15 @@ public class AuthController {
         SessionTokens tokens = refreshTokenService.refresh(httpRequest);
         return ResponseEntity.noContent()
                 .headers(authCookieFactory.headers(tokens.accessToken(), tokens.refreshToken()))
+                .build();
+    }
+
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@AuthenticationPrincipal CustomUserDetails principal,
+            HttpServletRequest httpRequest) {
+        refreshTokenService.logout(principal.getId(), httpRequest);
+        return ResponseEntity.noContent()
+                .headers(authCookieFactory.clearHeaders())
                 .build();
     }
 }
