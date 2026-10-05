@@ -3,12 +3,20 @@ package mg.improve.attend.service;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.request.UserUpdateRequest;
+import mg.improve.attend.domain.dto.response.UserMeResponse;
+import mg.improve.attend.domain.entity.Users;
 import mg.improve.attend.domain.enums.EventRole;
+import mg.improve.attend.domain.mapper.UsersMapper;
+import mg.improve.attend.exceptions.ConflictException;
+import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
+import mg.improve.attend.repository.entities.JUsers;
+import mg.improve.attend.validator.UserValidator;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,6 +33,8 @@ public class UserService {
     private final JEventOrganizerRepository organizers;
     private final JTicketTierRepository tiers;
     private final JTicketRepository tickets;
+    private final UsersMapper usersMapper;
+    private final UserValidator validator;
 
     /**
      * Hard-deletes the user and everything that depends on them, in foreign-key order.
@@ -54,5 +64,48 @@ public class UserService {
 
         // 5. The user. refresh_token rows go with them via the cascading FK.
         users.findById(userId).ifPresent(users::delete);
+    }
+
+    @Transactional(readOnly = true)
+    public UserMeResponse getCurrentUser(UUID userId) {
+        return UserMeResponse.from(load(userId));
+    }
+
+    @Transactional
+    public UserMeResponse updateCurrentUser(UUID userId, UserUpdateRequest request) {
+        validator.validate(request);
+        requireUsernameAvailable(userId, request.username());
+
+        JUsers entity = users.findById(userId)
+                .orElseThrow(() -> new NotFoundException("USER_NOT_FOUND", "User not found"));
+        if (request.fullName() != null) {
+            entity.setFullName(request.fullName());
+        }
+        if (request.username() != null) {
+            entity.setUsername(request.username());
+        }
+        if (request.dateBirth() != null) {
+            entity.setDateBirth(request.dateBirth());
+        }
+
+        // saveAndFlush so the @UpdateTimestamp value is generated before the response is built.
+        return UserMeResponse.from(usersMapper.toDomain(users.saveAndFlush(entity)));
+    }
+
+    private Users load(UUID userId) {
+        return users.findById(userId)
+                .map(usersMapper::toDomain)
+                .orElseThrow(() -> new NotFoundException("USER_NOT_FOUND", "User not found"));
+    }
+
+    private void requireUsernameAvailable(UUID userId, String username) {
+        if (username == null) {
+            return;
+        }
+        users.findByUsername(username)
+                .filter(existing -> !existing.getId().equals(userId))
+                .ifPresent(existing -> {
+                    throw new ConflictException("USERNAME_TAKEN", "Username already in use");
+                });
     }
 }
