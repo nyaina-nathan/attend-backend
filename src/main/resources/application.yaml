@@ -32,3 +32,10 @@ spring:
     expiration : 
       access : ${JWT_EXPIRATION_ACCESS}
       refresh: ${JWT_EXPIRATION_REFRESH}
+
+# Auth cookies. SameSite=None is required for a cross-site frontend, but browsers only
+# store such a cookie when it is also Secure, so Serve over HTTPS when secure=true.
+app:
+  cookie:
+    secure: ${COOKIE_SECURE:true}
+    same-site: ${COOKIE_SAME_SITE:None}
