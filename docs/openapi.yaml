@@ -318,10 +318,20 @@ paths:
           $ref: '#/components/responses/Unauthorized'
     get:
       tags: [Events]
-      summary: List public events
-      description: Public. Lists events where `isPublic = true`.
+      summary: List events
+      description: |
+        Public discovery. Anonymous callers receive events where `isPublic = true`.
+
+        An authenticated caller may pass `isMine=true` to list only the events they
+        organize (`CREATOR` or `ADMIN`), which lifts the `isPublic = true`
+        restriction so private events are included. `isPublic` is only applied when
+        `isMine` is effective: `isMine=true&isPublic=false` returns the caller's
+        private events and `isMine=true&isPublic=true` their public ones. Without an
+        effective `isMine`, `isPublic` is ignored and the public list is returned.
       operationId: listEvents
-      security: []
+      security:
+        - {}
+        - access_token: []
       parameters:
         - name: q
           in: query
@@ -346,6 +356,21 @@ paths:
           schema:
             $ref: '#/components/schemas/EventStatus'
             default: OK
+        - name: isMine
+          in: query
+          description: |
+            Only the caller's own events (as organizer). Requires authentication;
+            anonymous callers fall back to the public list.
+          schema:
+            type: boolean
+            default: false
+        - name: isPublic
+          in: query
+          description: |
+            Filter on `isPublic`. Only applied when `isMine` is effective;
+            ignored otherwise.
+          schema:
+            type: boolean
         - $ref: '#/components/parameters/PageParam'
         - $ref: '#/components/parameters/SizeParam'
         - name: sort
@@ -356,7 +381,7 @@ paths:
             default: startTime,asc
       responses:
         '200':
-          description: Paginated list of public events.
+          description: Paginated list of events.
           content:
             application/json:
               schema:

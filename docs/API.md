@@ -53,7 +53,7 @@ Roles are **per event**, not global. A user can be `ADMIN` of one event and a pl
 
 ### Security config (coarse, URL-level)
 Only answers "is the caller authenticated?":
-- Public: `/auth/register`, `/auth/login`, `/auth/refresh`, `GET /events`, `GET /events/{eventId}` (visibility rules still apply in the service), `GET /events/{eventId}/tiers`.
+- Public: `/auth/register`, `/auth/login`, `/auth/refresh`, `GET /events`, `GET /events/{eventId}` (visibility rules still apply in the service), `GET /events/{eventId}/tiers`. `GET /events` stays public; its `isMine` filter only takes effect for an authenticated caller.
 - Everything else: authenticated.
 - No role checks here.
 
@@ -243,7 +243,11 @@ Errors: `400` (e.g. `endTime` must be after `startTime`).
 ### GET `/events`
 Public. Lists events where `isPublic = true`.
 
-Query params: `q` (title search), `from`, `to` (filter on `startTime`), `status` (default `OK`), `page`, `size`, `sort` (default `startTime,asc`).
+Query params: `q` (title search), `from`, `to` (filter on `startTime`), `status` (default `OK`), `isMine`, `isPublic`, `page`, `size`, `sort` (default `startTime,asc`).
+
+- `isMine=true` (requires authentication) lists only events the caller organizes (`CREATOR` or `ADMIN`) and lifts the `isPublic = true` restriction, so private events are included by default.
+- `isPublic` is only applied when `isMine` is effective: `isMine=true&isPublic=false` returns the caller's private events, `isMine=true&isPublic=true` their public ones. Without an effective `isMine`, `isPublic` is ignored.
+- Anonymous callers (or `isMine` absent/false) get the default public listing.
 
 Response `200`: paginated wrapper with items:
 ```json
@@ -542,7 +546,7 @@ Response `200`:
 | GET / PATCH / DELETE | `/users/me` | 🔒 | user |
 | POST | `/users/me/password` | 🔒 | user |
 | POST | `/events` | 🔒 | user |
-| GET | `/events` | none | anyone |
+| GET | `/events` | optional | public; `isMine=true` for the caller's organized events |
 | GET | `/events/{eventId}` | optional | public, or organizer / ticket holder |
 | PATCH | `/events/{eventId}` | 🔒 | organizer |
 | POST | `/events/{eventId}/cancel` | 🔒 | organizer |
