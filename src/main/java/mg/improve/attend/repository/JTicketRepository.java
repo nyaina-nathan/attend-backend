@@ -23,6 +23,10 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
 
     boolean existsByTier_Event_Id(UUID eventId);
 
+    boolean existsByTier_Id(UUID tierId);
+
+    long countByTier_IdAndTicketStatusIn(UUID tierId, Collection<TicketStatus> statuses);
+
     interface TierIssued {
         UUID getTierId();
 
