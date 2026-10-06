@@ -5,6 +5,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.exceptions.BadRequestException;
@@ -85,6 +86,26 @@ public class EventValidator {
         Instant endTime = request.endTime() != null ? request.endTime() : existingEndTime;
         if (startTime != null && endTime != null && !endTime.isAfter(startTime)) {
             details.add(new ErrorDetail("endTime", "must be after startTime"));
+        }
+
+        if (!details.isEmpty()) {
+            throw new BadRequestException("VALIDATION_ERROR", "Validation failed", details);
+        }
+    }
+
+    /**
+     * Validates the body of {@code POST /events/{eventId}/organizers}. Exactly one of
+     * {@code username} or {@code email} must identify the user.
+     */
+    public void validate(AddOrganizerRequest request) {
+        List<ErrorDetail> details = new ArrayList<>();
+
+        boolean hasUsername = !isBlank(request.username());
+        boolean hasEmail = !isBlank(request.email());
+        if (!hasUsername && !hasEmail) {
+            details.add(new ErrorDetail("username", "provide either username or email"));
+        } else if (hasUsername && hasEmail) {
+            details.add(new ErrorDetail("username", "provide only one of username or email"));
         }
 
         if (!details.isEmpty()) {
