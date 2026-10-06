@@ -14,6 +14,10 @@ public interface JTicketTierRepository extends JpaRepository<JTicketTier, UUID> 
 
     List<JTicketTier> findByEvent_Id(UUID eventId);
 
+    boolean existsByEvent_IdAndTierName(UUID eventId, String tierName);
+
+    boolean existsByEvent_IdAndTierNameAndIdNot(UUID eventId, String tierName, UUID id);
+
     @Modifying
     @Query("delete from JTicketTier t where t.event.id = :eventId")
     void deleteByEventId(@Param("eventId") UUID eventId);
