@@ -6,13 +6,16 @@ import java.math.BigDecimal;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 
 import mg.improve.attend.TestcontainersConfiguration;
+import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
 import mg.improve.attend.domain.dto.response.EventSummary;
+import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
@@ -422,6 +425,280 @@ class EventControllerIT extends IntegrationTestSupport {
         JEvents event = seedEvent(owner, "Event", true);
 
         assertThat(call(HttpMethod.POST, "/api/events/" + event.getId() + "/cancel", null, new HttpHeaders())
+                .statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    // ------------------------------------------------------------------
+    // GET /api/events/{eventId}/organizers
+    // ------------------------------------------------------------------
+
+    @Test
+    void listOrganizers_returnsCreatorAndAdminsForOrganizer() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        JUsers admin = seedUser("admin@example.com", "admin", "secret123");
+        seedOrganizer(admin, event, EventRole.ADMIN);
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/organizers", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        List<Organizer> body = List.of(readBody(response, Organizer[].class));
+        assertThat(body).hasSize(2);
+        assertThat(body).extracting(Organizer::username).containsExactlyInAnyOrder("owner", "admin");
+        assertThat(body).extracting(Organizer::eventRole)
+                .containsExactlyInAnyOrder(EventRole.CREATOR, EventRole.ADMIN);
+
+        Organizer adminEntry = body.stream()
+                .filter(organizer -> organizer.eventRole() == EventRole.ADMIN)
+                .findFirst().orElseThrow();
+        assertThat(adminEntry.userId()).isEqualTo(admin.getId());
+        assertThat(adminEntry.fullName()).isEqualTo("Seeded User");
+    }
+
+    @Test
+    void listOrganizers_rejectsNonOrganizer() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, "Event", true);
+        HttpResponse<String> registered = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/organizers", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_AN_ORGANIZER");
+    }
+
+    @Test
+    void listOrganizers_requiresAuthentication() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, "Event", true);
+
+        assertThat(call(HttpMethod.GET, "/api/events/" + event.getId() + "/organizers", null, new HttpHeaders())
+                .statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    @Test
+    void listOrganizers_returnsNotFoundForUnknownEvent() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response =
+                call(HttpMethod.GET, "/api/events/" + UUID.randomUUID() + "/organizers", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("EVENT_NOT_FOUND");
+    }
+
+    // ------------------------------------------------------------------
+    // POST /api/events/{eventId}/organizers
+    // ------------------------------------------------------------------
+
+    @Test
+    void addOrganizer_addsAdminForCreator() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        JUsers target = seedUser("admin@example.com", "admin", "secret123");
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events/" + event.getId() + "/organizers",
+                new AddOrganizerRequest("admin", null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CREATED.value());
+        Organizer body = readBody(response, Organizer.class);
+        assertThat(body.eventRole()).isEqualTo(EventRole.ADMIN);
+        assertThat(body.userId()).isEqualTo(target.getId());
+        assertThat(body.username()).isEqualTo("admin");
+
+        assertThat(organizers.findByEvent_IdAndUser_Id(event.getId(), target.getId()))
+                .hasValueSatisfying(organizer ->
+                        assertThat(organizer.getEventRole()).isEqualTo(EventRole.ADMIN));
+    }
+
+    @Test
+    void addOrganizer_resolvesByEmail() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        JUsers target = seedUser("admin@example.com", "admin", "secret123");
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events/" + event.getId() + "/organizers",
+                new AddOrganizerRequest(null, "admin@example.com"), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CREATED.value());
+        assertThat(readBody(response, Organizer.class).userId()).isEqualTo(target.getId());
+    }
+
+    @Test
+    void addOrganizer_rejectsNonCreator() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, "Event", true);
+        seedUser("admin@example.com", "admin", "secret123");
+        HttpResponse<String> registered = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events/" + event.getId() + "/organizers",
+                new AddOrganizerRequest("admin", null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_THE_CREATOR");
+    }
+
+    @Test
+    void addOrganizer_rejectsUnknownUser() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events/" + event.getId() + "/organizers",
+                new AddOrganizerRequest("ghost", null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("USER_NOT_FOUND");
+    }
+
+    @Test
+    void addOrganizer_rejectsAlreadyOrganizer() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        JEvents event = seedEvent(owner, "Event", true);
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events/" + event.getId() + "/organizers",
+                new AddOrganizerRequest("owner", null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("ALREADY_ORGANIZER");
+    }
+
+    @Test
+    void addOrganizer_rejectsMissingIdentity() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events/" + event.getId() + "/organizers",
+                new AddOrganizerRequest(null, null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("VALIDATION_ERROR");
+    }
+
+    @Test
+    void addOrganizer_rejectsBothIdentityFields() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events/" + event.getId() + "/organizers",
+                new AddOrganizerRequest("owner", "owner@example.com"), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("VALIDATION_ERROR");
+    }
+
+    @Test
+    void addOrganizer_requiresAuthentication() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, "Event", true);
+
+        assertThat(call(HttpMethod.POST, "/api/events/" + event.getId() + "/organizers",
+                new AddOrganizerRequest("owner", null), new HttpHeaders()).statusCode())
+                .isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    // ------------------------------------------------------------------
+    // DELETE /api/events/{eventId}/organizers/{organizerId}
+    // ------------------------------------------------------------------
+
+    @Test
+    void removeOrganizer_deletesAdmin() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        JUsers admin = seedUser("admin@example.com", "admin", "secret123");
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        UUID organizerId = organizers.findByEvent_IdAndUser_Id(event.getId(), admin.getId()).orElseThrow().getId();
+
+        HttpResponse<String> response = call(HttpMethod.DELETE,
+                "/api/events/" + event.getId() + "/organizers/" + organizerId, null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NO_CONTENT.value());
+        assertThat(organizers.findById(organizerId)).isEmpty();
+    }
+
+    @Test
+    void removeOrganizer_rejectsCreatorRow() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        UUID creatorOrganizerId =
+                organizers.findByEvent_IdAndUser_Id(event.getId(), owner.getId()).orElseThrow().getId();
+
+        HttpResponse<String> response = call(HttpMethod.DELETE,
+                "/api/events/" + event.getId() + "/organizers/" + creatorOrganizerId, null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("CANNOT_REMOVE_CREATOR");
+        assertThat(organizers.findById(creatorOrganizerId)).isPresent();
+    }
+
+    @Test
+    void removeOrganizer_rejectsNonCreator() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, "Event", true);
+        JUsers admin = seedUser("admin@example.com", "admin", "secret123");
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        UUID organizerId = organizers.findByEvent_IdAndUser_Id(event.getId(), admin.getId()).orElseThrow().getId();
+        HttpResponse<String> registered = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response = call(HttpMethod.DELETE,
+                "/api/events/" + event.getId() + "/organizers/" + organizerId, null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_THE_CREATOR");
+        assertThat(organizers.findById(organizerId)).isPresent();
+    }
+
+    @Test
+    void removeOrganizer_rejectsOrganizerOfAnotherEvent() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        JEvents otherEvent = seedEvent(owner, "Other Event", true);
+        JUsers admin = seedUser("admin@example.com", "admin", "secret123");
+        seedOrganizer(admin, otherEvent, EventRole.ADMIN);
+        UUID organizerId =
+                organizers.findByEvent_IdAndUser_Id(otherEvent.getId(), admin.getId()).orElseThrow().getId();
+
+        HttpResponse<String> response = call(HttpMethod.DELETE,
+                "/api/events/" + event.getId() + "/organizers/" + organizerId, null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("ORGANIZER_NOT_FOUND");
+        assertThat(organizers.findById(organizerId)).isPresent();
+    }
+
+    @Test
+    void removeOrganizer_requiresAuthentication() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, "Event", true);
+        JUsers admin = seedUser("admin@example.com", "admin", "secret123");
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        UUID organizerId = organizers.findByEvent_IdAndUser_Id(event.getId(), admin.getId()).orElseThrow().getId();
+
+        assertThat(call(HttpMethod.DELETE,
+                "/api/events/" + event.getId() + "/organizers/" + organizerId, null, new HttpHeaders())
                 .statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
     }
 

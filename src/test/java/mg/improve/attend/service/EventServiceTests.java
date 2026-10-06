@@ -15,15 +15,20 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
+import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.dto.response.TierSummary;
+import mg.improve.attend.domain.entity.EventOrganizer;
 import mg.improve.attend.domain.entity.Events;
+import mg.improve.attend.domain.entity.Users;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
+import mg.improve.attend.domain.mapper.EventOrganizerMapper;
 import mg.improve.attend.domain.mapper.EventsMapper;
 import mg.improve.attend.exceptions.BadRequestException;
 import mg.improve.attend.exceptions.ConflictException;
@@ -78,6 +83,9 @@ class EventServiceTests {
 
     @Mock
     private EventsMapper eventsMapper;
+
+    @Mock
+    private EventOrganizerMapper organizerMapper;
 
     @Mock
     private EventValidator validator;
@@ -579,6 +587,321 @@ class EventServiceTests {
     }
 
     // ------------------------------------------------------------------
+    // listOrganizers
+    // ------------------------------------------------------------------
+
+    @Test
+    void listOrganizers_returnsAllForAnyOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        UUID adminId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        JEventOrganizer creatorRow = organizerEntity(userEntity(creatorId), entity, EventRole.CREATOR);
+        JEventOrganizer adminRow = organizerEntity(userEntity(adminId), entity, EventRole.ADMIN);
+        EventOrganizer creatorDomain =
+                organizerDomain(UUID.randomUUID(), userDomain(creatorId, "creator", "Creator"), EventRole.CREATOR);
+        EventOrganizer adminDomain =
+                organizerDomain(UUID.randomUUID(), userDomain(adminId, "admin", "Admin"), EventRole.ADMIN);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.findByEvent_Id(eventId)).thenReturn(List.of(creatorRow, adminRow));
+        when(organizerMapper.toDomain(creatorRow)).thenReturn(creatorDomain);
+        when(organizerMapper.toDomain(adminRow)).thenReturn(adminDomain);
+
+        // The caller is the ADMIN, proving non-creator organizers may list.
+        List<Organizer> response = eventService.listOrganizers(eventId, adminId);
+
+        assertThat(response).extracting(Organizer::eventRole)
+                .containsExactlyInAnyOrder(EventRole.CREATOR, EventRole.ADMIN);
+        assertThat(response).extracting(Organizer::username)
+                .containsExactlyInAnyOrder("creator", "admin");
+    }
+
+    @Test
+    void listOrganizers_rejectsNonOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        JEventOrganizer creatorRow = organizerEntity(userEntity(UUID.randomUUID()), entity, EventRole.CREATOR);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.findByEvent_Id(eventId)).thenReturn(List.of(creatorRow));
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> eventService.listOrganizers(eventId, callerId))
+                .satisfies(ex -> {
+                    assertThat(ex.getCode()).isEqualTo("NOT_AN_ORGANIZER");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                });
+
+        verifyNoInteractions(organizerMapper);
+    }
+
+    @Test
+    void listOrganizers_rejectsUnknownEvent() {
+        UUID eventId = UUID.randomUUID();
+        when(events.findById(eventId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> eventService.listOrganizers(eventId, UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("EVENT_NOT_FOUND"));
+
+        verify(organizers, never()).findByEvent_Id(any());
+    }
+
+    // ------------------------------------------------------------------
+    // addOrganizer
+    // ------------------------------------------------------------------
+
+    @Test
+    void addOrganizer_addsAdminForCreator() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        UUID targetId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        JUsers target = userEntity(targetId);
+        AddOrganizerRequest request = new AddOrganizerRequest("admin", null);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, creatorId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(users.findByUsername("admin")).thenReturn(Optional.of(target));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, targetId)).thenReturn(false);
+        when(organizers.saveAndFlush(any(JEventOrganizer.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(organizerMapper.toDomain(any(JEventOrganizer.class)))
+                .thenReturn(organizerDomain(UUID.randomUUID(), userDomain(targetId, "admin", "Admin"), EventRole.ADMIN));
+
+        Organizer response = eventService.addOrganizer(eventId, creatorId, request);
+
+        verify(validator).validate(request);
+        ArgumentCaptor<JEventOrganizer> captor = ArgumentCaptor.forClass(JEventOrganizer.class);
+        verify(organizers).saveAndFlush(captor.capture());
+        assertThat(captor.getValue().getEventRole()).isEqualTo(EventRole.ADMIN);
+        assertThat(captor.getValue().getUser()).isSameAs(target);
+        assertThat(captor.getValue().getEvent()).isSameAs(entity);
+        assertThat(response.eventRole()).isEqualTo(EventRole.ADMIN);
+    }
+
+    @Test
+    void addOrganizer_resolvesByEmail() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        UUID targetId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        JUsers target = userEntity(targetId);
+        AddOrganizerRequest request = new AddOrganizerRequest(null, "admin@example.com");
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, creatorId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(users.findByEmail("admin@example.com")).thenReturn(Optional.of(target));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, targetId)).thenReturn(false);
+        when(organizers.saveAndFlush(any(JEventOrganizer.class)))
+                .thenAnswer(invocation -> invocation.getArgument(0));
+        when(organizerMapper.toDomain(any(JEventOrganizer.class)))
+                .thenReturn(organizerDomain(UUID.randomUUID(), userDomain(targetId, "admin", "Admin"), EventRole.ADMIN));
+
+        Organizer response = eventService.addOrganizer(eventId, creatorId, request);
+
+        verify(users).findByEmail("admin@example.com");
+        verify(users, never()).findByUsername(any());
+        assertThat(response.eventRole()).isEqualTo(EventRole.ADMIN);
+    }
+
+    @Test
+    void addOrganizer_rejectsNonCreator() {
+        UUID eventId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, callerId, EventRole.CREATOR))
+                .thenReturn(false);
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> eventService.addOrganizer(eventId, callerId,
+                        new AddOrganizerRequest("admin", null)))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_THE_CREATOR"));
+
+        verifyNoInteractions(validator, users);
+    }
+
+    @Test
+    void addOrganizer_rejectsUnknownEvent() {
+        UUID eventId = UUID.randomUUID();
+        when(events.findById(eventId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> eventService.addOrganizer(eventId, UUID.randomUUID(),
+                        new AddOrganizerRequest("admin", null)))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("EVENT_NOT_FOUND"));
+
+        verifyNoInteractions(validator, users);
+    }
+
+    @Test
+    void addOrganizer_propagatesValidationFailure() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        AddOrganizerRequest request = new AddOrganizerRequest(null, null);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, creatorId, EventRole.CREATOR))
+                .thenReturn(true);
+        doThrow(new BadRequestException("VALIDATION_ERROR", "Validation failed"))
+                .when(validator).validate(any(AddOrganizerRequest.class));
+
+        assertThatExceptionOfType(BadRequestException.class)
+                .isThrownBy(() -> eventService.addOrganizer(eventId, creatorId, request))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("VALIDATION_ERROR"));
+
+        verifyNoInteractions(users);
+        verify(organizers, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void addOrganizer_rejectsUnknownUser() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, creatorId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(users.findByUsername("ghost")).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> eventService.addOrganizer(eventId, creatorId,
+                        new AddOrganizerRequest("ghost", null)))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("USER_NOT_FOUND"));
+
+        verify(organizers, never()).saveAndFlush(any());
+    }
+
+    @Test
+    void addOrganizer_rejectsAlreadyOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        UUID targetId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        JUsers target = userEntity(targetId);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, creatorId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(users.findByUsername("admin")).thenReturn(Optional.of(target));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, targetId)).thenReturn(true);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> eventService.addOrganizer(eventId, creatorId,
+                        new AddOrganizerRequest("admin", null)))
+                .satisfies(ex -> {
+                    assertThat(ex.getCode()).isEqualTo("ALREADY_ORGANIZER");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+
+        verify(organizers, never()).saveAndFlush(any());
+    }
+
+    // ------------------------------------------------------------------
+    // removeOrganizer
+    // ------------------------------------------------------------------
+
+    @Test
+    void removeOrganizer_deletesAdminForCreator() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        JEventOrganizer adminRow = organizerEntity(userEntity(UUID.randomUUID()), entity, EventRole.ADMIN);
+        adminRow.setId(organizerId);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, creatorId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(organizers.findByIdAndEvent_Id(organizerId, eventId)).thenReturn(Optional.of(adminRow));
+
+        eventService.removeOrganizer(eventId, creatorId, organizerId);
+
+        verify(organizers).delete(adminRow);
+    }
+
+    @Test
+    void removeOrganizer_rejectsNonCreator() {
+        UUID eventId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, callerId, EventRole.CREATOR))
+                .thenReturn(false);
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> eventService.removeOrganizer(eventId, callerId, UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_THE_CREATOR"));
+
+        verify(organizers, never()).findByIdAndEvent_Id(any(), any());
+        verify(organizers, never()).delete(any());
+    }
+
+    @Test
+    void removeOrganizer_rejectsUnknownEvent() {
+        UUID eventId = UUID.randomUUID();
+        when(events.findById(eventId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> eventService.removeOrganizer(eventId, UUID.randomUUID(), UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("EVENT_NOT_FOUND"));
+
+        verify(organizers, never()).delete(any());
+    }
+
+    @Test
+    void removeOrganizer_rejectsUnknownRow() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, creatorId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(organizers.findByIdAndEvent_Id(organizerId, eventId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> eventService.removeOrganizer(eventId, creatorId, organizerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("ORGANIZER_NOT_FOUND"));
+
+        verify(organizers, never()).delete(any());
+    }
+
+    @Test
+    void removeOrganizer_rejectsCreatorRow() {
+        UUID eventId = UUID.randomUUID();
+        UUID creatorId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        JEventOrganizer creatorRow = organizerEntity(userEntity(creatorId), entity, EventRole.CREATOR);
+        creatorRow.setId(organizerId);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, creatorId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(organizers.findByIdAndEvent_Id(organizerId, eventId)).thenReturn(Optional.of(creatorRow));
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> eventService.removeOrganizer(eventId, creatorId, organizerId))
+                .satisfies(ex -> {
+                    assertThat(ex.getCode()).isEqualTo("CANNOT_REMOVE_CREATOR");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+
+        verify(organizers, never()).delete(any());
+    }
+
+    // ------------------------------------------------------------------
     // fixtures
     // ------------------------------------------------------------------
 
@@ -663,5 +986,21 @@ class EventServiceTests {
                 return price;
             }
         };
+    }
+
+    private static EventOrganizer organizerDomain(UUID id, Users user, EventRole role) {
+        EventOrganizer domain = new EventOrganizer();
+        domain.setId(id);
+        domain.setUser(user);
+        domain.setEventRole(role);
+        return domain;
+    }
+
+    private static Users userDomain(UUID id, String username, String fullName) {
+        Users user = new Users();
+        user.setId(id);
+        user.setUsername(username);
+        user.setFullName(fullName);
+        return user;
     }
 }
