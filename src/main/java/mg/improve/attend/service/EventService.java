@@ -12,16 +12,19 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
 import mg.improve.attend.domain.dto.response.EventSummary;
+import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.dto.response.TierSummary;
 import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
+import mg.improve.attend.domain.mapper.EventOrganizerMapper;
 import mg.improve.attend.domain.mapper.EventsMapper;
 import mg.improve.attend.exceptions.ConflictException;
 import mg.improve.attend.exceptions.ForbiddenException;
@@ -59,6 +62,7 @@ public class EventService {
     private final JTicketRepository tickets;
     private final JUsersRepository users;
     private final EventsMapper eventsMapper;
+    private final EventOrganizerMapper organizerMapper;
     private final EventValidator validator;
 
     /**
@@ -204,6 +208,76 @@ public class EventService {
 
         JEvents saved = events.saveAndFlush(event);
         return EventDetail.from(eventsMapper.toDomain(saved), EventRole.CREATOR, tiersFor(eventId));
+    }
+
+    /**
+     * Lists the organizers of an event. Any organizer of the event ({@code CREATOR} or
+     * {@code ADMIN}) may read the list; an authenticated non-organizer gets {@code 403}.
+     */
+    @Transactional(readOnly = true)
+    public List<Organizer> listOrganizers(UUID eventId, UUID userId) {
+        loadEventOr404(eventId);
+
+        List<JEventOrganizer> eventOrganizers = organizers.findByEvent_Id(eventId);
+        boolean callerIsOrganizer = eventOrganizers.stream()
+                .anyMatch(organizer -> organizer.getUser().getId().equals(userId));
+        if (!callerIsOrganizer) {
+            throw new ForbiddenException("NOT_AN_ORGANIZER", "Caller is not an organizer of this event");
+        }
+
+        return eventOrganizers.stream()
+                .map(organizerMapper::toDomain)
+                .map(Organizer::from)
+                .toList();
+    }
+
+    /**
+     * Adds an {@code ADMIN} organizer to an event. Creator only. The target user is resolved
+     * by {@code username} or {@code email}.
+     */
+    @Transactional
+    public Organizer addOrganizer(UUID eventId, UUID userId, AddOrganizerRequest request) {
+        JEvents event = requireCreator(eventId, userId);
+        validator.validate(request);
+
+        JUsers target = resolveUser(request);
+        if (organizers.existsByEvent_IdAndUser_Id(eventId, target.getId())) {
+            throw new ConflictException("ALREADY_ORGANIZER", "User is already an organizer of this event");
+        }
+
+        JEventOrganizer organizer = new JEventOrganizer();
+        organizer.setUser(target);
+        organizer.setEvent(event);
+        organizer.setEventRole(EventRole.ADMIN);
+        JEventOrganizer saved = organizers.saveAndFlush(organizer);
+
+        return Organizer.from(organizerMapper.toDomain(saved));
+    }
+
+    /**
+     * Removes an {@code ADMIN} organizer from an event. Creator only, and the {@code CREATOR}
+     * row itself can never be removed ({@code 409}).
+     */
+    @Transactional
+    public void removeOrganizer(UUID eventId, UUID userId, UUID organizerId) {
+        requireCreator(eventId, userId);
+
+        JEventOrganizer organizer = organizers.findByIdAndEvent_Id(organizerId, eventId)
+                .orElseThrow(() -> new NotFoundException("ORGANIZER_NOT_FOUND", "Organizer not found"));
+        if (organizer.getEventRole() == EventRole.CREATOR) {
+            throw new ConflictException("CANNOT_REMOVE_CREATOR", "The creator row cannot be removed");
+        }
+
+        organizers.delete(organizer);
+    }
+
+    private JUsers resolveUser(AddOrganizerRequest request) {
+        if (request.username() != null && !request.username().isBlank()) {
+            return users.findByUsername(request.username())
+                    .orElseThrow(() -> new NotFoundException("USER_NOT_FOUND", "User not found"));
+        }
+        return users.findByEmail(request.email())
+                .orElseThrow(() -> new NotFoundException("USER_NOT_FOUND", "User not found"));
     }
 
     private JEvents loadEventOr404(UUID eventId) {

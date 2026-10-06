@@ -1,11 +1,14 @@
 package mg.improve.attend.rest.controller;
 
 import java.time.Instant;
+import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
+import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.security.CustomUserDetails;
@@ -65,6 +68,26 @@ public class EventController {
     public ResponseEntity<EventDetail> cancelEvent(@AuthenticationPrincipal CustomUserDetails principal,
             @PathVariable UUID eventId) {
         return ResponseEntity.ok(eventService.cancelEvent(eventId, principal.getId()));
+    }
+
+    @GetMapping("/{eventId}/organizers")
+    public ResponseEntity<List<Organizer>> listOrganizers(@AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId) {
+        return ResponseEntity.ok(eventService.listOrganizers(eventId, principal.getId()));
+    }
+
+    @PostMapping("/{eventId}/organizers")
+    public ResponseEntity<Organizer> addOrganizer(@AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId, @RequestBody AddOrganizerRequest request) {
+        Organizer created = eventService.addOrganizer(eventId, principal.getId(), request);
+        return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+
+    @DeleteMapping("/{eventId}/organizers/{organizerId}")
+    public ResponseEntity<Void> removeOrganizer(@AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId, @PathVariable UUID organizerId) {
+        eventService.removeOrganizer(eventId, principal.getId(), organizerId);
+        return ResponseEntity.noContent().build();
     }
 
     @GetMapping
