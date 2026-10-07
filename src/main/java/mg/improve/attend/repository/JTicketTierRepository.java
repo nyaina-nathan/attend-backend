@@ -1,11 +1,14 @@
 package mg.improve.attend.repository;
 
+import jakarta.persistence.LockModeType;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import mg.improve.attend.repository.entities.JTicketTier;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -13,6 +16,14 @@ import org.springframework.data.repository.query.Param;
 public interface JTicketTierRepository extends JpaRepository<JTicketTier, UUID> {
 
     List<JTicketTier> findByEvent_Id(UUID eventId);
+
+    /**
+     * Loads a tier with a row lock ({@code SELECT ... FOR UPDATE}) so ticket issuance cannot
+     * oversell its capacity under concurrent calls.
+     */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("select t from JTicketTier t where t.id = :id")
+    Optional<JTicketTier> findByIdForUpdate(@Param("id") UUID id);
 
     boolean existsByEvent_IdAndTierName(UUID eventId, String tierName);
 
