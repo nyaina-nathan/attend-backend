@@ -4,13 +4,17 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.response.CheckInResponse;
+import mg.improve.attend.domain.dto.response.CheckedBy;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
+import mg.improve.attend.domain.entity.Ticket;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.TicketMapper;
 import mg.improve.attend.exceptions.ConflictException;
+import mg.improve.attend.exceptions.ErrorDetail;
 import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
@@ -116,8 +120,7 @@ public class TicketService {
      */
     @Transactional(readOnly = true)
     public TicketDetail getTicket(UUID ticketId, UUID userId) {
-        JTicket ticket = tickets.findDetailById(ticketId)
-                .orElseThrow(() -> new NotFoundException("TICKET_NOT_FOUND", "Ticket not found"));
+        JTicket ticket = loadTicketOr404(ticketId);
 
         UUID eventId = ticket.getTier().getEvent().getId();
         boolean organizer = organizers.existsByEvent_IdAndUser_Id(eventId, userId);
@@ -128,5 +131,113 @@ public class TicketService {
         }
 
         return TicketDetail.from(ticketMapper.toDomain(ticket), organizer);
+    }
+
+    /**
+     * Checks a ticket in. Organizers of the ticket's event only; the event is always resolved
+     * from the ticket (ticket → tier → event), never from the request, so an organizer of event
+     * A cannot scan a ticket of event B. The status transition is atomic, so two simultaneous
+     * scans cannot both succeed.
+     */
+    @Transactional
+    public CheckInResponse checkInTicket(UUID ticketId, UUID userId) {
+        JTicket ticket = loadTicketOr404(ticketId);
+        JEvents event = ticket.getTier().getEvent();
+        requireOrganizer(event.getId(), userId);
+
+        if (event.getStatus() != EventStatus.OK) {
+            throw new ConflictException("EVENT_NOT_OPEN", "Event is cancelled or has already ended");
+        }
+        if (ticket.getTicketStatus() != TicketStatus.VALID) {
+            throw notValidOrUsed(ticket);
+        }
+
+        Instant now = Instant.now();
+        if (ticket.getValidUntil() != null && ticket.getValidUntil().isBefore(now)) {
+            throw new ConflictException("TICKET_EXPIRED", "Ticket is past its validUntil time");
+        }
+
+        JUsers scanner = users.findById(userId)
+                .orElseThrow(() -> new NotFoundException("USER_NOT_FOUND", "User not found"));
+
+        int updated = tickets.markCheckedIn(ticketId, TicketStatus.VALID, TicketStatus.USED, now, scanner);
+        if (updated == 0) {
+            throw notValidOrUsed(loadTicketOr404(ticketId));
+        }
+
+        Ticket domain = ticketMapper.toDomain(ticket);
+        CheckedBy checkedBy = new CheckedBy(scanner.getId(), scanner.getUsername());
+        return CheckInResponse.from(domain, TicketStatus.USED, now, checkedBy);
+    }
+
+    /**
+     * Cancels a {@code VALID} ticket owned by the caller, freeing its capacity. Only the owner
+     * may cancel; an already used or non-valid ticket is a {@code 409}.
+     */
+    @Transactional
+    public TicketResponse cancelTicket(UUID ticketId, UUID userId) {
+        JTicket ticket = loadTicketOr404(ticketId);
+        if (!ticket.getOwner().getId().equals(userId)) {
+            throw new ForbiddenException("NOT_THE_OWNER", "Caller is not the owner of this ticket");
+        }
+        if (ticket.getTicketStatus() != TicketStatus.VALID) {
+            throw notValidOrUsed(ticket);
+        }
+
+        int updated = tickets.updateStatus(ticketId, List.of(TicketStatus.VALID), TicketStatus.CANCELLED);
+        if (updated == 0) {
+            throw notValidOrUsed(loadTicketOr404(ticketId));
+        }
+
+        Ticket domain = ticketMapper.toDomain(ticket);
+        domain.setTicketStatus(TicketStatus.CANCELLED);
+        return TicketResponse.from(domain);
+    }
+
+    /**
+     * Refunds a {@code VALID} ticket. Organizers of the ticket's event only; the event is
+     * resolved from the ticket. Only an unused ticket can be refunded.
+     */
+    @Transactional
+    public TicketResponse refundTicket(UUID ticketId, UUID userId) {
+        JTicket ticket = loadTicketOr404(ticketId);
+        requireOrganizer(ticket.getTier().getEvent().getId(), userId);
+
+        if (ticket.getTicketStatus() != TicketStatus.VALID) {
+            throw new ConflictException("TICKET_NOT_REFUNDABLE",
+                    "Ticket cannot be refunded in its current state");
+        }
+
+        int updated = tickets.updateStatus(ticketId, List.of(TicketStatus.VALID), TicketStatus.REFUNDED);
+        if (updated == 0) {
+            throw new ConflictException("TICKET_NOT_REFUNDABLE",
+                    "Ticket cannot be refunded in its current state");
+        }
+
+        Ticket domain = ticketMapper.toDomain(ticket);
+        domain.setTicketStatus(TicketStatus.REFUNDED);
+        return TicketResponse.from(domain);
+    }
+
+    private JTicket loadTicketOr404(UUID ticketId) {
+        return tickets.findDetailById(ticketId)
+                .orElseThrow(() -> new NotFoundException("TICKET_NOT_FOUND", "Ticket not found"));
+    }
+
+    private void requireOrganizer(UUID eventId, UUID userId) {
+        if (!organizers.existsByEvent_IdAndUser_Id(eventId, userId)) {
+            throw new ForbiddenException("NOT_AN_ORGANIZER", "Caller is not an organizer of this event");
+        }
+    }
+
+    /** Maps a non-valid ticket to the documented {@code 409}: used vs cancelled/refunded. */
+    private ConflictException notValidOrUsed(JTicket ticket) {
+        if (ticket.getTicketStatus() == TicketStatus.USED) {
+            List<ErrorDetail> details = ticket.getCheckedInAt() == null
+                    ? List.of()
+                    : List.of(new ErrorDetail("checkedInAt", ticket.getCheckedInAt().toString()));
+            return new ConflictException("TICKET_ALREADY_USED", "Ticket has already been used", details);
+        }
+        return new ConflictException("TICKET_NOT_VALID", "Ticket is cancelled or refunded");
     }
 }
