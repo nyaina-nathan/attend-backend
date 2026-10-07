@@ -39,5 +39,9 @@ app:
   cookie:
     secure: ${COOKIE_SECURE:true}
     same-site: ${COOKIE_SAME_SITE:None}
+  # Single frontend origin allowed to call the API with credentials (cookies). Must be an
+  # exact origin, not "*", because credentialed CORS cannot use a wildcard.
+  cors:
+    allowed-origin: ${CORS_ALLOWED_ORIGIN}
   refresh:
     rotation-threshold: ${REFRESH_ROTATION_THRESHOLD:24h}
