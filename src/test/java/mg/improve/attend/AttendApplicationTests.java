@@ -12,7 +12,8 @@ import org.springframework.test.context.TestPropertySource;
 		"spring.jwt.expiration.access=15m",
 		"spring.jwt.expiration.refresh=7d",
 		"app.cookie.secure=false",
-		"app.cookie.same-site=Lax"
+		"app.cookie.same-site=Lax",
+		"app.cors.allowed-origin=http://localhost:5173"
 })
 class AttendApplicationTests {
 

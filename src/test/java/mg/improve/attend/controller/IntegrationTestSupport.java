@@ -42,7 +42,8 @@ import tools.jackson.databind.ObjectMapper;
         "spring.jwt.expiration.access=15m",
         "spring.jwt.expiration.refresh=7d",
         "app.cookie.secure=false",
-        "app.cookie.same-site=Lax"
+        "app.cookie.same-site=Lax",
+        "app.cors.allowed-origin=http://localhost:5173"
 })
 abstract class IntegrationTestSupport {
 
