@@ -16,6 +16,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import mg.improve.attend.domain.dto.response.CheckInResponse;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
@@ -421,6 +422,352 @@ class TicketServiceTests {
     }
 
     // ------------------------------------------------------------------
+    // checkInTicket
+    // ------------------------------------------------------------------
+
+    @Test
+    void checkInTicket_marksUsedForOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID tierId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+        Instant endTime = Instant.now().plusSeconds(3600);
+        JEvents event = eventEntity(eventId, EventStatus.OK, endTime);
+        JTicketTier tier = tierEntity(tierId, event, "VIP", "40.00", 10);
+        JUsers owner = userEntity(ownerId, "owner");
+        JUsers scanner = userEntity(organizerId, "scanner");
+        JTicket ticket = new JTicket();
+        ticket.setId(ticketId);
+        ticket.setOwner(owner);
+        ticket.setTier(tier);
+        ticket.setPricePaid(new BigDecimal("40.00"));
+        ticket.setTicketStatus(TicketStatus.VALID);
+        ticket.setValidUntil(endTime);
+
+        Ticket domain = Ticket.builder()
+                .id(ticketId)
+                .owner(userDomain(ownerId, "owner", "Owner Name"))
+                .tier(tierDomain(tierId, eventDomain(eventId, EventStatus.OK, endTime), "VIP", "40.00", 10))
+                .pricePaid(new BigDecimal("40.00"))
+                .ticketStatus(TicketStatus.VALID)
+                .build();
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, organizerId)).thenReturn(true);
+        when(users.findById(organizerId)).thenReturn(Optional.of(scanner));
+        when(tickets.markCheckedIn(eq(ticketId), eq(TicketStatus.VALID), eq(TicketStatus.USED),
+                any(Instant.class), eq(scanner))).thenReturn(1);
+        when(ticketMapper.toDomain(ticket)).thenReturn(domain);
+
+        CheckInResponse response = ticketService.checkInTicket(ticketId, organizerId);
+
+        assertThat(response.id()).isEqualTo(ticketId);
+        assertThat(response.ticketStatus()).isEqualTo(TicketStatus.USED);
+        assertThat(response.checkedInAt()).isNotNull();
+        assertThat(response.checkedBy().id()).isEqualTo(organizerId);
+        assertThat(response.checkedBy().username()).isEqualTo("scanner");
+        assertThat(response.owner().fullName()).isEqualTo("Owner Name");
+        assertThat(response.owner().username()).isEqualTo("owner");
+        assertThat(response.tier().tierName()).isEqualTo("VIP");
+    }
+
+    @Test
+    void checkInTicket_rejectsUnknownTicket() {
+        UUID ticketId = UUID.randomUUID();
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> ticketService.checkInTicket(ticketId, UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_NOT_FOUND"));
+
+        verifyNoInteractions(organizers);
+    }
+
+    @Test
+    void checkInTicket_rejectsNonOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.VALID);
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(false);
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> ticketService.checkInTicket(ticketId, callerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_AN_ORGANIZER"));
+
+        verify(tickets, never()).markCheckedIn(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void checkInTicket_rejectsClosedEvent() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.CANCELLED, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.VALID);
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(true);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> ticketService.checkInTicket(ticketId, callerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("EVENT_NOT_OPEN"));
+
+        verify(tickets, never()).markCheckedIn(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void checkInTicket_rejectsAlreadyUsedTicket() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        Instant checkedInAt = Instant.now().minusSeconds(120);
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.USED);
+        ticket.setCheckedInAt(checkedInAt);
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(true);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> ticketService.checkInTicket(ticketId, callerId))
+                .satisfies(ex -> {
+                    assertThat(ex.getCode()).isEqualTo("TICKET_ALREADY_USED");
+                    assertThat(ex.getDetails()).hasSize(1);
+                    assertThat(ex.getDetails().get(0).field()).isEqualTo("checkedInAt");
+                });
+
+        verify(tickets, never()).markCheckedIn(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void checkInTicket_rejectsCancelledTicket() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"),
+                TicketStatus.CANCELLED);
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(true);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> ticketService.checkInTicket(ticketId, callerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_NOT_VALID"));
+
+        verify(tickets, never()).markCheckedIn(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void checkInTicket_rejectsExpiredTicket() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.VALID);
+        ticket.setValidUntil(Instant.now().minusSeconds(60));
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(true);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> ticketService.checkInTicket(ticketId, callerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_EXPIRED"));
+
+        verify(tickets, never()).markCheckedIn(any(), any(), any(), any(), any());
+    }
+
+    @Test
+    void checkInTicket_mapsLostRaceToAlreadyUsed() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        Instant endTime = Instant.now().plusSeconds(3600);
+        JEvents event = eventEntity(eventId, EventStatus.OK, endTime);
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket valid = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.VALID);
+        JTicket used = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.USED);
+        JUsers scanner = userEntity(callerId, "scanner");
+
+        when(tickets.findDetailById(ticketId))
+                .thenReturn(Optional.of(valid))
+                .thenReturn(Optional.of(used));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(true);
+        when(users.findById(callerId)).thenReturn(Optional.of(scanner));
+        when(tickets.markCheckedIn(eq(ticketId), eq(TicketStatus.VALID), eq(TicketStatus.USED),
+                any(Instant.class), eq(scanner))).thenReturn(0);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> ticketService.checkInTicket(ticketId, callerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_ALREADY_USED"));
+    }
+
+    // ------------------------------------------------------------------
+    // cancelTicket
+    // ------------------------------------------------------------------
+
+    @Test
+    void cancelTicket_cancelsOwnValidTicket() {
+        UUID ticketId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        JTicket ticket = ticketEntity(ticketId, tierEntity(UUID.randomUUID(), null, "VIP", "40.00", 10),
+                userEntity(userId, "owner"), TicketStatus.VALID);
+        Ticket domain = Ticket.builder()
+                .id(ticketId)
+                .owner(userDomain(userId, "owner", "Owner"))
+                .tier(tierDomain(UUID.randomUUID(),
+                        eventDomain(UUID.randomUUID(), EventStatus.OK, Instant.now().plusSeconds(3600)),
+                        "VIP", "40.00", 10))
+                .pricePaid(new BigDecimal("40.00"))
+                .ticketStatus(TicketStatus.VALID)
+                .build();
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(tickets.updateStatus(ticketId, List.of(TicketStatus.VALID), TicketStatus.CANCELLED)).thenReturn(1);
+        when(ticketMapper.toDomain(ticket)).thenReturn(domain);
+
+        TicketResponse response = ticketService.cancelTicket(ticketId, userId);
+
+        assertThat(response.id()).isEqualTo(ticketId);
+        assertThat(response.ticketStatus()).isEqualTo(TicketStatus.CANCELLED);
+    }
+
+    @Test
+    void cancelTicket_rejectsNonOwner() {
+        UUID ticketId = UUID.randomUUID();
+        JTicket ticket = ticketEntity(ticketId, tierEntity(UUID.randomUUID(), null, "VIP", "40.00", 10),
+                userEntity(UUID.randomUUID(), "owner"), TicketStatus.VALID);
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> ticketService.cancelTicket(ticketId, UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_THE_OWNER"));
+
+        verify(tickets, never()).updateStatus(any(), any(), any());
+    }
+
+    @Test
+    void cancelTicket_rejectsUnknownTicket() {
+        UUID ticketId = UUID.randomUUID();
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> ticketService.cancelTicket(ticketId, UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_NOT_FOUND"));
+    }
+
+    @Test
+    void cancelTicket_rejectsAlreadyUsedTicket() {
+        UUID ticketId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        JTicket ticket = ticketEntity(ticketId, tierEntity(UUID.randomUUID(), null, "VIP", "40.00", 10),
+                userEntity(userId, "owner"), TicketStatus.USED);
+        ticket.setCheckedInAt(Instant.now());
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> ticketService.cancelTicket(ticketId, userId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_ALREADY_USED"));
+
+        verify(tickets, never()).updateStatus(any(), any(), any());
+    }
+
+    // ------------------------------------------------------------------
+    // refundTicket
+    // ------------------------------------------------------------------
+
+    @Test
+    void refundTicket_refundsValidTicketForOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.VALID);
+        Ticket domain = Ticket.builder()
+                .id(ticketId)
+                .owner(userDomain(UUID.randomUUID(), "owner", "Owner"))
+                .tier(tierDomain(UUID.randomUUID(),
+                        eventDomain(UUID.randomUUID(), EventStatus.OK, Instant.now().plusSeconds(3600)),
+                        "VIP", "40.00", 10))
+                .pricePaid(new BigDecimal("40.00"))
+                .ticketStatus(TicketStatus.VALID)
+                .build();
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, organizerId)).thenReturn(true);
+        when(tickets.updateStatus(ticketId, List.of(TicketStatus.VALID), TicketStatus.REFUNDED)).thenReturn(1);
+        when(ticketMapper.toDomain(ticket)).thenReturn(domain);
+
+        TicketResponse response = ticketService.refundTicket(ticketId, organizerId);
+
+        assertThat(response.id()).isEqualTo(ticketId);
+        assertThat(response.ticketStatus()).isEqualTo(TicketStatus.REFUNDED);
+    }
+
+    @Test
+    void refundTicket_rejectsNonOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.VALID);
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(false);
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> ticketService.refundTicket(ticketId, callerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_AN_ORGANIZER"));
+
+        verify(tickets, never()).updateStatus(any(), any(), any());
+    }
+
+    @Test
+    void refundTicket_rejectsUnknownTicket() {
+        UUID ticketId = UUID.randomUUID();
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> ticketService.refundTicket(ticketId, UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_NOT_FOUND"));
+
+        verifyNoInteractions(organizers);
+    }
+
+    @Test
+    void refundTicket_rejectsUsedTicket() {
+        UUID eventId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(UUID.randomUUID(), event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(UUID.randomUUID(), "owner"), TicketStatus.USED);
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, organizerId)).thenReturn(true);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> ticketService.refundTicket(ticketId, organizerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_NOT_REFUNDABLE"));
+
+        verify(tickets, never()).updateStatus(any(), any(), any());
+    }
+
+    // ------------------------------------------------------------------
     // fixtures
     // ------------------------------------------------------------------
 
@@ -441,6 +788,16 @@ class TicketServiceTests {
         entity.setTierName(name);
         entity.setPrice(new BigDecimal(price));
         entity.setCapacity(capacity);
+        return entity;
+    }
+
+    private static JTicket ticketEntity(UUID id, JTicketTier tier, JUsers owner, TicketStatus status) {
+        JTicket entity = new JTicket();
+        entity.setId(id);
+        entity.setTier(tier);
+        entity.setOwner(owner);
+        entity.setPricePaid(tier.getPrice());
+        entity.setTicketStatus(status);
         return entity;
     }
 

@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.UUID;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.repository.entities.JTicket;
+import mg.improve.attend.repository.entities.JUsers;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
@@ -55,6 +56,31 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
     @EntityGraph(attributePaths = {"owner", "checkedBy", "tier", "tier.event"})
     @Query("select t from JTicket t where t.id = :id")
     Optional<JTicket> findDetailById(@Param("id") UUID id);
+
+    /**
+     * Atomically checks a ticket in only while it is still in {@code allowedStatus}, setting the
+     * scan marker as a pair so {@code chk_ticket_checkin_pair} holds. Returns the number of rows
+     * updated (0 when the ticket was no longer in that status, e.g. two simultaneous scans).
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("update JTicket t set t.ticketStatus = :newStatus, t.checkedInAt = :checkedInAt, "
+            + "t.checkedBy = :scanner where t.id = :ticketId and t.ticketStatus = :allowedStatus")
+    int markCheckedIn(@Param("ticketId") UUID ticketId,
+            @Param("allowedStatus") TicketStatus allowedStatus,
+            @Param("newStatus") TicketStatus newStatus,
+            @Param("checkedInAt") Instant checkedInAt,
+            @Param("scanner") JUsers scanner);
+
+    /**
+     * Atomically moves a ticket's status while it is in one of {@code allowedStatuses}. Returns
+     * the number of rows updated (0 when the ticket was not in an allowed status).
+     */
+    @Modifying(clearAutomatically = true)
+    @Query("update JTicket t set t.ticketStatus = :newStatus "
+            + "where t.id = :ticketId and t.ticketStatus in :allowedStatuses")
+    int updateStatus(@Param("ticketId") UUID ticketId,
+            @Param("allowedStatuses") Collection<TicketStatus> allowedStatuses,
+            @Param("newStatus") TicketStatus newStatus);
 
     interface TierIssued {
         UUID getTierId();

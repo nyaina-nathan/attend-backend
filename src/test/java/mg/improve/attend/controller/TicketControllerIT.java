@@ -10,6 +10,8 @@ import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
 import mg.improve.attend.TestcontainersConfiguration;
+import mg.improve.attend.domain.dto.request.RefundRequest;
+import mg.improve.attend.domain.dto.response.CheckInResponse;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
@@ -419,6 +421,307 @@ class TicketControllerIT extends IntegrationTestSupport {
     }
 
     // ------------------------------------------------------------------
+    // POST /api/tickets/{ticketId}/check-in
+    // ------------------------------------------------------------------
+
+    @Test
+    void checkInTicket_marksUsedForOrganizer() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/check-in",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        CheckInResponse body = readBody(response, CheckInResponse.class);
+        assertThat(body.id()).isEqualTo(ticket.getId());
+        assertThat(body.ticketStatus()).isEqualTo(TicketStatus.USED);
+        assertThat(body.checkedInAt()).isNotNull();
+        assertThat(body.checkedBy().id()).isEqualTo(admin.getId());
+        assertThat(body.checkedBy().username()).isEqualTo("admin");
+        assertThat(body.owner().username()).isEqualTo("creator");
+        assertThat(body.tier().tierName()).isEqualTo("VIP");
+
+        JTicket stored = tickets.findById(ticket.getId()).orElseThrow();
+        assertThat(stored.getTicketStatus()).isEqualTo(TicketStatus.USED);
+        assertThat(stored.getCheckedInAt()).isNotNull();
+        assertThat(stored.getCheckedBy().getId()).isEqualTo(admin.getId());
+    }
+
+    @Test
+    void checkInTicket_requiresAuthentication() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/check-in",
+                null, new HttpHeaders());
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    @Test
+    void checkInTicket_rejectsNonOrganizer() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> otherReg = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(otherReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/check-in",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_AN_ORGANIZER");
+    }
+
+    @Test
+    void checkInTicket_returnsNotFoundForUnknownTicket() {
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + UUID.randomUUID() + "/check-in",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("TICKET_NOT_FOUND");
+    }
+
+    @Test
+    void checkInTicket_rejectsAlreadyUsedTicket() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        JTicket ticket = seedCheckedInTicket(creator, tier, admin);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/check-in",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
+        ApiError error = readBody(response, ApiError.class);
+        assertThat(error.error()).isEqualTo("TICKET_ALREADY_USED");
+        assertThat(error.details()).hasSize(1);
+        assertThat(error.details().get(0).field()).isEqualTo("checkedInAt");
+    }
+
+    @Test
+    void checkInTicket_rejectsCancelledTicket() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.CANCELLED);
+
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/check-in",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("TICKET_NOT_VALID");
+    }
+
+    @Test
+    void checkInTicket_rejectsExpiredTicket() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicketWithValidUntil(creator, tier, TicketStatus.VALID,
+                Instant.now().minus(Duration.ofHours(1)));
+
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/check-in",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("TICKET_EXPIRED");
+    }
+
+    @Test
+    void checkInTicket_rejectsCancelledEvent() {
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.CANCELLED, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/check-in",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("EVENT_NOT_OPEN");
+    }
+
+    // ------------------------------------------------------------------
+    // POST /api/tickets/{ticketId}/cancel
+    // ------------------------------------------------------------------
+
+    @Test
+    void cancelTicket_cancelsOwnTicketAndFreesCapacity() {
+        HttpResponse<String> ownerReg = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 1);
+        JTicket ticket = seedTicket(owner, tier, TicketStatus.VALID);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(ownerReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/cancel",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        assertThat(readBody(response, TicketResponse.class).ticketStatus()).isEqualTo(TicketStatus.CANCELLED);
+        assertThat(tickets.findById(ticket.getId()).orElseThrow().getTicketStatus())
+                .isEqualTo(TicketStatus.CANCELLED);
+
+        HttpResponse<String> issued = call(HttpMethod.POST, "/api/tiers/" + tier.getId() + "/tickets", null, auth);
+        assertThat(issued.statusCode()).isEqualTo(HttpStatus.CREATED.value());
+    }
+
+    @Test
+    void cancelTicket_rejectsNonOwner() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> otherReg = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(otherReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/cancel",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_THE_OWNER");
+    }
+
+    @Test
+    void cancelTicket_rejectsUsedTicket() {
+        HttpResponse<String> ownerReg = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedCheckedInTicket(owner, tier, owner);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(ownerReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/cancel",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("TICKET_ALREADY_USED");
+    }
+
+    @Test
+    void cancelTicket_requiresAuthentication() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/cancel",
+                null, new HttpHeaders());
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    // ------------------------------------------------------------------
+    // POST /api/tickets/{ticketId}/refund
+    // ------------------------------------------------------------------
+
+    @Test
+    void refundTicket_refundsValidTicketForOrganizer() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/refund",
+                new RefundRequest("duplicate purchase"), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        assertThat(readBody(response, TicketResponse.class).ticketStatus()).isEqualTo(TicketStatus.REFUNDED);
+        assertThat(tickets.findById(ticket.getId()).orElseThrow().getTicketStatus())
+                .isEqualTo(TicketStatus.REFUNDED);
+    }
+
+    @Test
+    void refundTicket_rejectsNonOrganizer() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> otherReg = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(otherReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/refund",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_AN_ORGANIZER");
+    }
+
+    @Test
+    void refundTicket_rejectsUsedTicket() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        JTicket ticket = seedCheckedInTicket(creator, tier, admin);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/refund",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("TICKET_NOT_REFUNDABLE");
+    }
+
+    @Test
+    void refundTicket_requiresAuthentication() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/refund",
+                null, new HttpHeaders());
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    // ------------------------------------------------------------------
     // fixtures
     // ------------------------------------------------------------------
 
@@ -460,6 +763,17 @@ class TicketControllerIT extends IntegrationTestSupport {
         ticket.setTier(tier);
         ticket.setPricePaid(tier.getPrice());
         ticket.setTicketStatus(status);
+        return tickets.saveAndFlush(ticket);
+    }
+
+    private JTicket seedTicketWithValidUntil(JUsers owner, JTicketTier tier, TicketStatus status,
+            Instant validUntil) {
+        JTicket ticket = new JTicket();
+        ticket.setOwner(owner);
+        ticket.setTier(tier);
+        ticket.setPricePaid(tier.getPrice());
+        ticket.setTicketStatus(status);
+        ticket.setValidUntil(validUntil);
         return tickets.saveAndFlush(ticket);
     }
 

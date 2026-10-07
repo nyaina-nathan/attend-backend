@@ -2,6 +2,8 @@ package mg.improve.attend.rest.controller;
 
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.request.RefundRequest;
+import mg.improve.attend.domain.dto.response.CheckInResponse;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
@@ -14,6 +16,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -51,5 +54,25 @@ public class TicketController {
     public ResponseEntity<TicketDetail> getTicket(
             @AuthenticationPrincipal CustomUserDetails principal, @PathVariable UUID ticketId) {
         return ResponseEntity.ok(ticketService.getTicket(ticketId, principal.getId()));
+    }
+
+    @PostMapping("/tickets/{ticketId}/check-in")
+    public ResponseEntity<CheckInResponse> checkInTicket(
+            @AuthenticationPrincipal CustomUserDetails principal, @PathVariable UUID ticketId) {
+        return ResponseEntity.ok(ticketService.checkInTicket(ticketId, principal.getId()));
+    }
+
+    @PostMapping("/tickets/{ticketId}/cancel")
+    public ResponseEntity<TicketResponse> cancelTicket(
+            @AuthenticationPrincipal CustomUserDetails principal, @PathVariable UUID ticketId) {
+        return ResponseEntity.ok(ticketService.cancelTicket(ticketId, principal.getId()));
+    }
+
+    /** The optional {@code reason} is accepted for API completeness but not stored. */
+    @PostMapping("/tickets/{ticketId}/refund")
+    public ResponseEntity<TicketResponse> refundTicket(
+            @AuthenticationPrincipal CustomUserDetails principal, @PathVariable UUID ticketId,
+            @RequestBody(required = false) RefundRequest request) {
+        return ResponseEntity.ok(ticketService.refundTicket(ticketId, principal.getId()));
     }
 }
