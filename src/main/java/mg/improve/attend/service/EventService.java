@@ -6,6 +6,7 @@ import jakarta.persistence.criteria.Subquery;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -16,9 +17,11 @@ import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
+import mg.improve.attend.domain.dto.response.EventStats;
 import mg.improve.attend.domain.dto.response.EventSummary;
 import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
+import mg.improve.attend.domain.dto.response.TierStats;
 import mg.improve.attend.domain.dto.response.TierSummary;
 import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.enums.EventRole;
@@ -55,6 +58,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 @RequiredArgsConstructor
 public class EventService {
+
+    /** Statuses that consume capacity, and therefore count as issued toward the event stats. */
+    private static final List<TicketStatus> CAPACITY_STATUSES =
+            List.of(TicketStatus.VALID, TicketStatus.USED);
 
     private final JEventsRepository events;
     private final JEventOrganizerRepository organizers;
@@ -130,7 +137,7 @@ public class EventService {
             return List.of();
         }
         Map<UUID, Long> issuedByTier = tickets
-                .countIssuedByTier(eventId, List.of(TicketStatus.VALID, TicketStatus.USED))
+                .countIssuedByTier(eventId, CAPACITY_STATUSES)
                 .stream()
                 .collect(Collectors.toMap(
                         JTicketRepository.TierIssued::getTierId,
@@ -144,6 +151,45 @@ public class EventService {
                             tier.getCapacity(), remaining);
                 })
                 .toList();
+    }
+
+    /**
+     * Sales and attendance statistics for an event. Organizers only. Each tier of the event is
+     * reported (zero-activity ones included), ordered by name. Only {@code VALID}/{@code USED}
+     * tickets count as issued and toward revenue; cancelled and refunded are excluded.
+     */
+    @Transactional(readOnly = true)
+    public EventStats getEventStats(UUID eventId, UUID userId) {
+        loadEventOr404(eventId);
+        requireOrganizer(eventId, userId);
+
+        List<JTicketTier> eventTiers = tiers.findByEvent_Id(eventId);
+        Map<UUID, JTicketRepository.TierAggregate> aggregates = tickets
+                .aggregateByTier(eventId, CAPACITY_STATUSES, TicketStatus.USED)
+                .stream()
+                .collect(Collectors.toMap(
+                        JTicketRepository.TierAggregate::getTierId,
+                        aggregate -> aggregate));
+
+        List<TierStats> byTier = eventTiers.stream()
+                .sorted(Comparator.comparing(JTicketTier::getTierName))
+                .map(tier -> {
+                    JTicketRepository.TierAggregate aggregate = aggregates.get(tier.getId());
+                    long issued = aggregate == null ? 0L : aggregate.getIssued();
+                    long checkedIn = aggregate == null ? 0L : aggregate.getCheckedIn();
+                    BigDecimal revenue = aggregate == null ? BigDecimal.ZERO : aggregate.getRevenue();
+                    return new TierStats(tier.getId(), tier.getTierName(), issued, checkedIn, revenue);
+                })
+                .toList();
+
+        int totalCapacity = eventTiers.stream().mapToInt(JTicketTier::getCapacity).sum();
+        long ticketsIssued = byTier.stream().mapToLong(TierStats::issued).sum();
+        long ticketsCheckedIn = byTier.stream().mapToLong(TierStats::checkedIn).sum();
+        BigDecimal revenue = byTier.stream()
+                .map(TierStats::revenue)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+
+        return new EventStats(eventId, totalCapacity, ticketsIssued, ticketsCheckedIn, revenue, byTier);
     }
 
     /**
@@ -291,6 +337,12 @@ public class EventService {
             throw new ForbiddenException("NOT_THE_CREATOR", "Caller is not the creator of this event");
         }
         return event;
+    }
+
+    private void requireOrganizer(UUID eventId, UUID userId) {
+        if (!organizers.existsByEvent_IdAndUser_Id(eventId, userId)) {
+            throw new ForbiddenException("NOT_AN_ORGANIZER", "Caller is not an organizer of this event");
+        }
     }
 
     /**
