@@ -3,6 +3,9 @@ package mg.improve.attend.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -13,6 +16,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketResponse;
 import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.entity.Ticket;
@@ -20,6 +24,7 @@ import mg.improve.attend.domain.entity.TicketTier;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.TicketMapper;
+import mg.improve.attend.exceptions.BadRequestException;
 import mg.improve.attend.exceptions.ConflictException;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JTicketRepository;
@@ -29,12 +34,17 @@ import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.repository.entities.JTicket;
 import mg.improve.attend.repository.entities.JTicketTier;
 import mg.improve.attend.repository.entities.JUsers;
+import mg.improve.attend.validator.TicketValidator;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
@@ -54,6 +64,9 @@ class TicketServiceTests {
 
     @Mock
     private TicketMapper ticketMapper;
+
+    @Mock
+    private TicketValidator validator;
 
     @InjectMocks
     private TicketService ticketService;
@@ -197,6 +210,83 @@ class TicketServiceTests {
                 .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("USER_NOT_FOUND"));
 
         verify(tickets, never()).saveAndFlush(any());
+    }
+
+    // ------------------------------------------------------------------
+    // listMyTickets
+    // ------------------------------------------------------------------
+
+    @Test
+    void listMyTickets_mapsPageAndPassesFilters() {
+        UUID userId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        UUID tierId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        Instant endTime = Instant.now().plusSeconds(3600);
+        JEvents event = eventEntity(eventId, EventStatus.OK, endTime);
+        JTicketTier tier = tierEntity(tierId, event, "VIP", "40.00", 10);
+        JUsers owner = userEntity(userId, "owner");
+        JTicket ticket = new JTicket();
+        ticket.setId(ticketId);
+        ticket.setOwner(owner);
+        ticket.setTier(tier);
+        ticket.setPricePaid(new BigDecimal("40.00"));
+        ticket.setTicketStatus(TicketStatus.VALID);
+
+        Ticket domain = Ticket.builder()
+                .id(ticketId)
+                .tier(tierDomain(tierId, eventDomain(eventId, EventStatus.OK, endTime), "VIP", "40.00", 10))
+                .pricePaid(new BigDecimal("40.00"))
+                .ticketStatus(TicketStatus.VALID)
+                .build();
+
+        when(tickets.findMyTickets(eq(userId), eq(TicketStatus.VALID), eq(true), any(Instant.class),
+                any(Pageable.class))).thenReturn(new PageImpl<>(List.of(ticket), PageRequest.of(0, 20), 1));
+        when(ticketMapper.toDomain(ticket)).thenReturn(domain);
+
+        PageTicket response = ticketService.listMyTickets(userId, TicketStatus.VALID, true, 0, 20);
+
+        verify(validator).validateListQuery(0, 20);
+        assertThat(response.page()).isZero();
+        assertThat(response.size()).isEqualTo(20);
+        assertThat(response.totalElements()).isEqualTo(1);
+        assertThat(response.totalPages()).isEqualTo(1);
+        assertThat(response.content()).hasSize(1);
+        assertThat(response.content().get(0).id()).isEqualTo(ticketId);
+        assertThat(response.content().get(0).tier().tierName()).isEqualTo("VIP");
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(tickets).findMyTickets(eq(userId), eq(TicketStatus.VALID), eq(true), any(Instant.class),
+                pageableCaptor.capture());
+        Sort.Order order = pageableCaptor.getValue().getSort().getOrderFor("tier.event.startTime");
+        assertThat(order).isNotNull();
+        assertThat(order.getDirection()).isEqualTo(Sort.Direction.ASC);
+    }
+
+    @Test
+    void listMyTickets_returnsEmptyPage() {
+        UUID userId = UUID.randomUUID();
+        when(tickets.findMyTickets(eq(userId), isNull(), eq(false), any(Instant.class), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        PageTicket response = ticketService.listMyTickets(userId, null, false, 0, 20);
+
+        assertThat(response.content()).isEmpty();
+        assertThat(response.totalElements()).isZero();
+        assertThat(response.totalPages()).isZero();
+    }
+
+    @Test
+    void listMyTickets_propagatesValidationFailure() {
+        UUID userId = UUID.randomUUID();
+        doThrow(new BadRequestException("VALIDATION_ERROR", "Validation failed"))
+                .when(validator).validateListQuery(-1, 20);
+
+        assertThatExceptionOfType(BadRequestException.class)
+                .isThrownBy(() -> ticketService.listMyTickets(userId, null, false, -1, 20))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("VALIDATION_ERROR"));
+
+        verifyNoInteractions(tickets);
     }
 
     // ------------------------------------------------------------------
