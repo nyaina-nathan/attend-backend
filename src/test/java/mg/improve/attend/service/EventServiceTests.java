@@ -3,6 +3,7 @@ package mg.improve.attend.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatExceptionOfType;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
@@ -19,8 +20,10 @@ import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
+import mg.improve.attend.domain.dto.response.EventStats;
 import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
+import mg.improve.attend.domain.dto.response.TierStats;
 import mg.improve.attend.domain.dto.response.TierSummary;
 import mg.improve.attend.domain.entity.EventOrganizer;
 import mg.improve.attend.domain.entity.Events;
@@ -902,6 +905,79 @@ class EventServiceTests {
     }
 
     // ------------------------------------------------------------------
+    // getEventStats
+    // ------------------------------------------------------------------
+
+    @Test
+    void getEventStats_aggregatesTiersAndIncludesZeroActivityTiers() {
+        UUID eventId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        UUID standardId = UUID.randomUUID();
+        UUID vipId = UUID.randomUUID();
+        UUID freeId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        JTicketTier vip = tierEntity(vipId, "VIP", new BigDecimal("40.00"), 10);
+        JTicketTier standard = tierEntity(standardId, "Standard", new BigDecimal("10.00"), 100);
+        JTicketTier free = tierEntity(freeId, "Free", BigDecimal.ZERO, 5);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(true);
+        when(tiers.findByEvent_Id(eventId)).thenReturn(List.of(vip, standard, free));
+        when(tickets.aggregateByTier(any(), any(), any())).thenReturn(List.of(
+                tierAggregate(standardId, 3, 1, new BigDecimal("30.00")),
+                tierAggregate(vipId, 1, 1, new BigDecimal("40.00"))));
+
+        EventStats stats = eventService.getEventStats(eventId, callerId);
+
+        assertThat(stats.eventId()).isEqualTo(eventId);
+        assertThat(stats.totalCapacity()).isEqualTo(115);
+        assertThat(stats.ticketsIssued()).isEqualTo(4);
+        assertThat(stats.ticketsCheckedIn()).isEqualTo(2);
+        assertThat(stats.revenue()).isEqualByComparingTo("70.00");
+        assertThat(stats.byTier()).extracting(TierStats::tierName)
+                .containsExactly("Free", "Standard", "VIP");
+
+        TierStats freeStats = stats.byTier().get(0);
+        assertThat(freeStats.tierId()).isEqualTo(freeId);
+        assertThat(freeStats.issued()).isZero();
+        assertThat(freeStats.checkedIn()).isZero();
+        assertThat(freeStats.revenue()).isEqualByComparingTo("0");
+
+        assertThat(stats.byTier().get(1).issued()).isEqualTo(3);
+        assertThat(stats.byTier().get(1).checkedIn()).isEqualTo(1);
+        assertThat(stats.byTier().get(1).revenue()).isEqualByComparingTo("30.00");
+
+        verify(tickets).aggregateByTier(eq(eventId),
+                eq(List.of(TicketStatus.VALID, TicketStatus.USED)), eq(TicketStatus.USED));
+    }
+
+    @Test
+    void getEventStats_rejectsUnknownEvent() {
+        UUID eventId = UUID.randomUUID();
+        when(events.findById(eventId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> eventService.getEventStats(eventId, UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("EVENT_NOT_FOUND"));
+
+        verifyNoInteractions(organizers, tiers, tickets);
+    }
+
+    @Test
+    void getEventStats_rejectsNonOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        when(events.findById(eventId)).thenReturn(Optional.of(eventEntity(eventId, true)));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(false);
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> eventService.getEventStats(eventId, callerId))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_AN_ORGANIZER"));
+
+        verifyNoInteractions(tiers, tickets);
+    }
+
+    // ------------------------------------------------------------------
     // fixtures
     // ------------------------------------------------------------------
 
@@ -970,6 +1046,31 @@ class EventServiceTests {
             @Override
             public long getIssued() {
                 return issued;
+            }
+        };
+    }
+
+    private static JTicketRepository.TierAggregate tierAggregate(UUID tierId, long issued, long checkedIn,
+            BigDecimal revenue) {
+        return new JTicketRepository.TierAggregate() {
+            @Override
+            public UUID getTierId() {
+                return tierId;
+            }
+
+            @Override
+            public long getIssued() {
+                return issued;
+            }
+
+            @Override
+            public long getCheckedIn() {
+                return checkedIn;
+            }
+
+            @Override
+            public BigDecimal getRevenue() {
+                return revenue;
             }
         };
     }

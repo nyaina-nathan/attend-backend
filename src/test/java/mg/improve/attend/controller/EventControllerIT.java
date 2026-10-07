@@ -14,9 +14,11 @@ import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
+import mg.improve.attend.domain.dto.response.EventStats;
 import mg.improve.attend.domain.dto.response.EventSummary;
 import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
+import mg.improve.attend.domain.dto.response.TierStats;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
@@ -700,6 +702,138 @@ class EventControllerIT extends IntegrationTestSupport {
         assertThat(call(HttpMethod.DELETE,
                 "/api/events/" + event.getId() + "/organizers/" + organizerId, null, new HttpHeaders())
                 .statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    // ------------------------------------------------------------------
+    // GET /api/events/{eventId}/stats
+    // ------------------------------------------------------------------
+
+    @Test
+    void getEventStats_returnsAggregatesForOrganizer() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        JTicketTier standard = seedTier(event, "Standard", "10.00", 100);
+        JTicketTier vip = seedTier(event, "VIP", "40.00", 10);
+        JUsers buyer = seedUser("buyer@example.com", "buyer", "secret123");
+        seedTicket(buyer, standard, TicketStatus.VALID);
+        seedTicket(buyer, standard, TicketStatus.VALID);
+        seedTicket(buyer, standard, TicketStatus.USED);
+        seedTicket(buyer, standard, TicketStatus.CANCELLED);
+        seedTicket(buyer, standard, TicketStatus.REFUNDED);
+        seedTicket(buyer, vip, TicketStatus.USED);
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/stats", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        EventStats body = readBody(response, EventStats.class);
+        assertThat(body.eventId()).isEqualTo(event.getId());
+        assertThat(body.totalCapacity()).isEqualTo(110);
+        assertThat(body.ticketsIssued()).isEqualTo(4);
+        assertThat(body.ticketsCheckedIn()).isEqualTo(2);
+        assertThat(body.revenue()).isEqualByComparingTo("70.00");
+
+        assertThat(body.byTier()).extracting(TierStats::tierName).containsExactly("Standard", "VIP");
+        TierStats standardStats = body.byTier().get(0);
+        assertThat(standardStats.tierId()).isEqualTo(standard.getId());
+        assertThat(standardStats.issued()).isEqualTo(3);
+        assertThat(standardStats.checkedIn()).isEqualTo(1);
+        assertThat(standardStats.revenue()).isEqualByComparingTo("30.00");
+        TierStats vipStats = body.byTier().get(1);
+        assertThat(vipStats.tierId()).isEqualTo(vip.getId());
+        assertThat(vipStats.issued()).isEqualTo(1);
+        assertThat(vipStats.checkedIn()).isEqualTo(1);
+        assertThat(vipStats.revenue()).isEqualByComparingTo("40.00");
+    }
+
+    @Test
+    void getEventStats_allowsAdminOrganizer() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, "Event", true);
+        seedTier(event, "Standard", "10.00", 10);
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/stats", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        assertThat(readBody(response, EventStats.class).totalCapacity()).isEqualTo(10);
+    }
+
+    @Test
+    void getEventStats_returnsZeroesWhenNoTickets() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        JTicketTier tier = seedTier(event, "Standard", "10.00", 25);
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/stats", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        EventStats body = readBody(response, EventStats.class);
+        assertThat(body.totalCapacity()).isEqualTo(25);
+        assertThat(body.ticketsIssued()).isZero();
+        assertThat(body.ticketsCheckedIn()).isZero();
+        assertThat(body.revenue()).isEqualByComparingTo("0");
+        assertThat(body.byTier()).hasSize(1);
+        assertThat(body.byTier().get(0).tierId()).isEqualTo(tier.getId());
+        assertThat(body.byTier().get(0).issued()).isZero();
+        assertThat(body.byTier().get(0).revenue()).isEqualByComparingTo("0");
+    }
+
+    @Test
+    void getEventStats_returnsEmptyByTierWhenEventHasNoTiers() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/stats", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        EventStats body = readBody(response, EventStats.class);
+        assertThat(body.totalCapacity()).isZero();
+        assertThat(body.byTier()).isEmpty();
+    }
+
+    @Test
+    void getEventStats_rejectsNonOrganizer() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, "Event", true);
+        HttpResponse<String> registered = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/stats", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_AN_ORGANIZER");
+    }
+
+    @Test
+    void getEventStats_returnsNotFoundForUnknownEvent() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response =
+                call(HttpMethod.GET, "/api/events/" + UUID.randomUUID() + "/stats", null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("EVENT_NOT_FOUND");
+    }
+
+    @Test
+    void getEventStats_requiresAuthentication() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, "Event", true);
+
+        HttpResponse<String> response =
+                call(HttpMethod.GET, "/api/events/" + event.getId() + "/stats", null, new HttpHeaders());
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
     }
 
     // ------------------------------------------------------------------
