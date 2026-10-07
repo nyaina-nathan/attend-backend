@@ -17,16 +17,20 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import mg.improve.attend.domain.dto.response.PageTicket;
+import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
 import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.entity.Ticket;
 import mg.improve.attend.domain.entity.TicketTier;
+import mg.improve.attend.domain.entity.Users;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.TicketMapper;
 import mg.improve.attend.exceptions.BadRequestException;
 import mg.improve.attend.exceptions.ConflictException;
+import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
+import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
@@ -52,6 +56,9 @@ class TicketServiceTests {
 
     private static final List<TicketStatus> CAPACITY_STATUSES =
             List.of(TicketStatus.VALID, TicketStatus.USED);
+
+    @Mock
+    private JEventOrganizerRepository organizers;
 
     @Mock
     private JTicketTierRepository tiers;
@@ -290,6 +297,130 @@ class TicketServiceTests {
     }
 
     // ------------------------------------------------------------------
+    // getTicket
+    // ------------------------------------------------------------------
+
+    @Test
+    void getTicket_returnsBaseDetailForOwner() {
+        UUID eventId = UUID.randomUUID();
+        UUID tierId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        Instant endTime = Instant.now().plusSeconds(3600);
+        JEvents event = eventEntity(eventId, EventStatus.OK, endTime);
+        JTicketTier tier = tierEntity(tierId, event, "VIP", "40.00", 10);
+        JUsers owner = userEntity(userId, "owner");
+        JTicket ticket = new JTicket();
+        ticket.setId(ticketId);
+        ticket.setOwner(owner);
+        ticket.setTier(tier);
+        ticket.setPricePaid(new BigDecimal("40.00"));
+        ticket.setTicketStatus(TicketStatus.VALID);
+
+        Ticket domain = Ticket.builder()
+                .id(ticketId)
+                .owner(userDomain(userId, "owner", "Owner"))
+                .tier(tierDomain(tierId, eventDomain(eventId, EventStatus.OK, endTime), "VIP", "40.00", 10))
+                .pricePaid(new BigDecimal("40.00"))
+                .ticketStatus(TicketStatus.VALID)
+                .build();
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, userId)).thenReturn(false);
+        when(ticketMapper.toDomain(ticket)).thenReturn(domain);
+
+        TicketDetail response = ticketService.getTicket(ticketId, userId);
+
+        assertThat(response.id()).isEqualTo(ticketId);
+        assertThat(response.event().id()).isEqualTo(eventId);
+        assertThat(response.tier().tierName()).isEqualTo("VIP");
+        assertThat(response.owner()).isNull();
+        assertThat(response.checkedBy()).isNull();
+    }
+
+    @Test
+    void getTicket_includesOwnerAndCheckedByForOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID tierId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+        UUID scannerId = UUID.randomUUID();
+        Instant endTime = Instant.now().plusSeconds(3600);
+        JEvents event = eventEntity(eventId, EventStatus.OK, endTime);
+        JTicketTier tier = tierEntity(tierId, event, "VIP", "40.00", 10);
+        JTicket ticket = new JTicket();
+        ticket.setId(ticketId);
+        ticket.setTier(tier);
+        ticket.setOwner(userEntity(ownerId, "owner"));
+        ticket.setPricePaid(new BigDecimal("40.00"));
+        ticket.setTicketStatus(TicketStatus.USED);
+
+        Ticket domain = Ticket.builder()
+                .id(ticketId)
+                .owner(userDomain(ownerId, "owner", "Owner Name"))
+                .checkedBy(userDomain(scannerId, "scanner", "Scanner"))
+                .tier(tierDomain(tierId, eventDomain(eventId, EventStatus.OK, endTime), "VIP", "40.00", 10))
+                .pricePaid(new BigDecimal("40.00"))
+                .ticketStatus(TicketStatus.USED)
+                .build();
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, organizerId)).thenReturn(true);
+        when(ticketMapper.toDomain(ticket)).thenReturn(domain);
+
+        TicketDetail response = ticketService.getTicket(ticketId, organizerId);
+
+        assertThat(response.owner()).isNotNull();
+        assertThat(response.owner().id()).isEqualTo(ownerId);
+        assertThat(response.owner().fullName()).isEqualTo("Owner Name");
+        assertThat(response.owner().username()).isEqualTo("owner");
+        assertThat(response.checkedBy()).isNotNull();
+        assertThat(response.checkedBy().id()).isEqualTo(scannerId);
+        assertThat(response.checkedBy().username()).isEqualTo("scanner");
+    }
+
+    @Test
+    void getTicket_rejectsUnknownTicket() {
+        UUID ticketId = UUID.randomUUID();
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> ticketService.getTicket(ticketId, UUID.randomUUID()))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_NOT_FOUND"));
+
+        verifyNoInteractions(organizers);
+    }
+
+    @Test
+    void getTicket_rejectsNonOwnerNonOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID tierId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        UUID callerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+        JTicketTier tier = tierEntity(tierId, event, "VIP", "40.00", 10);
+        JTicket ticket = new JTicket();
+        ticket.setId(ticketId);
+        ticket.setTier(tier);
+        ticket.setOwner(userEntity(UUID.randomUUID(), "owner"));
+        ticket.setPricePaid(new BigDecimal("40.00"));
+        ticket.setTicketStatus(TicketStatus.VALID);
+
+        when(tickets.findDetailById(ticketId)).thenReturn(Optional.of(ticket));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, callerId)).thenReturn(false);
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> ticketService.getTicket(ticketId, callerId))
+                .satisfies(ex -> {
+                    assertThat(ex.getCode()).isEqualTo("TICKET_FORBIDDEN");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.FORBIDDEN);
+                });
+
+        verifyNoInteractions(ticketMapper);
+    }
+
+    // ------------------------------------------------------------------
     // fixtures
     // ------------------------------------------------------------------
 
@@ -338,6 +469,14 @@ class TicketServiceTests {
         domain.setTierName(name);
         domain.setPrice(new BigDecimal(price));
         domain.setCapacity(capacity);
+        return domain;
+    }
+
+    private static Users userDomain(UUID id, String username, String fullName) {
+        Users domain = new Users();
+        domain.setId(id);
+        domain.setUsername(username);
+        domain.setFullName(fullName);
         return domain;
     }
 }

@@ -5,12 +5,15 @@ import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.response.PageTicket;
+import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.TicketMapper;
 import mg.improve.attend.exceptions.ConflictException;
+import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
+import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
@@ -38,6 +41,7 @@ public class TicketService {
     private static final List<TicketStatus> CAPACITY_STATUSES =
             List.of(TicketStatus.VALID, TicketStatus.USED);
 
+    private final JEventOrganizerRepository organizers;
     private final JTicketTierRepository tiers;
     private final JTicketRepository tickets;
     private final JUsersRepository users;
@@ -103,5 +107,26 @@ public class TicketService {
                 result.getTotalElements(),
                 result.getTotalPages(),
                 content);
+    }
+
+    /**
+     * Returns a ticket to its owner or to any organizer of its event (resolved from ticket →
+     * tier). Organizers additionally receive {@code owner} and {@code checkedBy}; a caller who
+     * is neither gets {@code 403}.
+     */
+    @Transactional(readOnly = true)
+    public TicketDetail getTicket(UUID ticketId, UUID userId) {
+        JTicket ticket = tickets.findDetailById(ticketId)
+                .orElseThrow(() -> new NotFoundException("TICKET_NOT_FOUND", "Ticket not found"));
+
+        UUID eventId = ticket.getTier().getEvent().getId();
+        boolean organizer = organizers.existsByEvent_IdAndUser_Id(eventId, userId);
+        boolean owner = ticket.getOwner().getId().equals(userId);
+        if (!owner && !organizer) {
+            throw new ForbiddenException("TICKET_FORBIDDEN",
+                    "Caller is neither the ticket owner nor an organizer of this event");
+        }
+
+        return TicketDetail.from(ticketMapper.toDomain(ticket), organizer);
     }
 }
