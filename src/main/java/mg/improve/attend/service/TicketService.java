@@ -2,10 +2,13 @@ package mg.improve.attend.service;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.response.AttendeeTicket;
 import mg.improve.attend.domain.dto.response.CheckInResponse;
 import mg.improve.attend.domain.dto.response.CheckedBy;
+import mg.improve.attend.domain.dto.response.PageAttendeeTicket;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
@@ -18,6 +21,7 @@ import mg.improve.attend.exceptions.ErrorDetail;
 import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
+import mg.improve.attend.repository.JEventsRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
@@ -45,6 +49,7 @@ public class TicketService {
     private static final List<TicketStatus> CAPACITY_STATUSES =
             List.of(TicketStatus.VALID, TicketStatus.USED);
 
+    private final JEventsRepository events;
     private final JEventOrganizerRepository organizers;
     private final JTicketTierRepository tiers;
     private final JTicketRepository tickets;
@@ -131,6 +136,34 @@ public class TicketService {
         }
 
         return TicketDetail.from(ticketMapper.toDomain(ticket), organizer);
+    }
+
+    /**
+     * Lists an event's tickets for its organizers, optionally narrowed by status, tier and a
+     * case-insensitive owner name/username search. Paginated, earliest issuance first.
+     */
+    @Transactional(readOnly = true)
+    public PageAttendeeTicket listEventTickets(UUID eventId, UUID userId, TicketStatus status,
+            UUID tierId, String q, int page, int size) {
+        loadEventOr404(eventId);
+        requireOrganizer(eventId, userId);
+        validator.validateListQuery(page, size);
+
+        String pattern = (q == null || q.isBlank()) ? null : "%" + q.toLowerCase(Locale.ROOT) + "%";
+        Pageable pageable = PageRequest.of(page, size, Sort.by(Sort.Order.asc("createdAt")));
+        Page<JTicket> result = tickets.findEventAttendees(eventId, status, tierId, pattern, pageable);
+
+        List<AttendeeTicket> content = result.getContent().stream()
+                .map(ticketMapper::toDomain)
+                .map(AttendeeTicket::from)
+                .toList();
+
+        return new PageAttendeeTicket(
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                content);
     }
 
     /**
@@ -222,6 +255,11 @@ public class TicketService {
     private JTicket loadTicketOr404(UUID ticketId) {
         return tickets.findDetailById(ticketId)
                 .orElseThrow(() -> new NotFoundException("TICKET_NOT_FOUND", "Ticket not found"));
+    }
+
+    private JEvents loadEventOr404(UUID eventId) {
+        return events.findById(eventId)
+                .orElseThrow(() -> new NotFoundException("EVENT_NOT_FOUND", "Event not found"));
     }
 
     private void requireOrganizer(UUID eventId, UUID userId) {

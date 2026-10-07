@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import mg.improve.attend.domain.dto.response.CheckInResponse;
+import mg.improve.attend.domain.dto.response.PageAttendeeTicket;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
@@ -32,6 +33,7 @@ import mg.improve.attend.exceptions.ConflictException;
 import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
+import mg.improve.attend.repository.JEventsRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
@@ -60,6 +62,9 @@ class TicketServiceTests {
 
     @Mock
     private JEventOrganizerRepository organizers;
+
+    @Mock
+    private JEventsRepository events;
 
     @Mock
     private JTicketTierRepository tiers;
@@ -765,6 +770,114 @@ class TicketServiceTests {
                 .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("TICKET_NOT_REFUNDABLE"));
 
         verify(tickets, never()).updateStatus(any(), any(), any());
+    }
+
+    // ------------------------------------------------------------------
+    // listEventTickets
+    // ------------------------------------------------------------------
+
+    @Test
+    void listEventTickets_mapsPageAndNormalizesQuery() {
+        UUID eventId = UUID.randomUUID();
+        UUID tierId = UUID.randomUUID();
+        UUID ownerId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        UUID ticketId = UUID.randomUUID();
+        Instant endTime = Instant.now().plusSeconds(3600);
+        JEvents event = eventEntity(eventId, EventStatus.OK, endTime);
+        JTicketTier tier = tierEntity(tierId, event, "VIP", "40.00", 10);
+        JTicket ticket = ticketEntity(ticketId, tier, userEntity(ownerId, "alice"), TicketStatus.VALID);
+
+        Ticket domain = Ticket.builder()
+                .id(ticketId)
+                .owner(userDomain(ownerId, "alice", "Alice Doe"))
+                .tier(tierDomain(tierId, eventDomain(eventId, EventStatus.OK, endTime), "VIP", "40.00", 10))
+                .pricePaid(new BigDecimal("40.00"))
+                .ticketStatus(TicketStatus.VALID)
+                .build();
+
+        when(events.findById(eventId)).thenReturn(Optional.of(event));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, organizerId)).thenReturn(true);
+        when(tickets.findEventAttendees(eq(eventId), eq(TicketStatus.VALID), eq(tierId), eq("%alice%"),
+                any(Pageable.class))).thenReturn(new PageImpl<>(List.of(ticket), PageRequest.of(0, 20), 1));
+        when(ticketMapper.toDomain(ticket)).thenReturn(domain);
+
+        PageAttendeeTicket response = ticketService.listEventTickets(eventId, organizerId,
+                TicketStatus.VALID, tierId, "Alice", 0, 20);
+
+        verify(validator).validateListQuery(0, 20);
+        assertThat(response.totalElements()).isEqualTo(1);
+        assertThat(response.totalPages()).isEqualTo(1);
+        assertThat(response.content()).hasSize(1);
+        assertThat(response.content().get(0).id()).isEqualTo(ticketId);
+        assertThat(response.content().get(0).owner().username()).isEqualTo("alice");
+        assertThat(response.content().get(0).tier().tierName()).isEqualTo("VIP");
+
+        ArgumentCaptor<Pageable> pageableCaptor = ArgumentCaptor.forClass(Pageable.class);
+        verify(tickets).findEventAttendees(eq(eventId), eq(TicketStatus.VALID), eq(tierId), eq("%alice%"),
+                pageableCaptor.capture());
+        assertThat(pageableCaptor.getValue().getSort().getOrderFor("createdAt").getDirection())
+                .isEqualTo(Sort.Direction.ASC);
+    }
+
+    @Test
+    void listEventTickets_treatsBlankQueryAsNoFilter() {
+        UUID eventId = UUID.randomUUID();
+        UUID organizerId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, EventStatus.OK, Instant.now().plusSeconds(3600));
+
+        when(events.findById(eventId)).thenReturn(Optional.of(event));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, organizerId)).thenReturn(true);
+        when(tickets.findEventAttendees(eq(eventId), isNull(), isNull(), isNull(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        PageAttendeeTicket response = ticketService.listEventTickets(eventId, organizerId, null, null, "   ", 0, 20);
+
+        assertThat(response.content()).isEmpty();
+    }
+
+    @Test
+    void listEventTickets_rejectsUnknownEvent() {
+        UUID eventId = UUID.randomUUID();
+        when(events.findById(eventId)).thenReturn(Optional.empty());
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> ticketService.listEventTickets(eventId, UUID.randomUUID(), null, null, null, 0, 20))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("EVENT_NOT_FOUND"));
+
+        verifyNoInteractions(organizers, tickets, validator);
+    }
+
+    @Test
+    void listEventTickets_rejectsNonOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        when(events.findById(eventId)).thenReturn(Optional.of(eventEntity(eventId, EventStatus.OK,
+                Instant.now().plusSeconds(3600))));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, userId)).thenReturn(false);
+
+        assertThatExceptionOfType(ForbiddenException.class)
+                .isThrownBy(() -> ticketService.listEventTickets(eventId, userId, null, null, null, 0, 20))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_AN_ORGANIZER"));
+
+        verifyNoInteractions(tickets, validator);
+    }
+
+    @Test
+    void listEventTickets_propagatesValidationFailure() {
+        UUID eventId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        when(events.findById(eventId)).thenReturn(Optional.of(eventEntity(eventId, EventStatus.OK,
+                Instant.now().plusSeconds(3600))));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, userId)).thenReturn(true);
+        doThrow(new BadRequestException("VALIDATION_ERROR", "Validation failed"))
+                .when(validator).validateListQuery(-1, 20);
+
+        assertThatExceptionOfType(BadRequestException.class)
+                .isThrownBy(() -> ticketService.listEventTickets(eventId, userId, null, null, null, -1, 20))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("VALIDATION_ERROR"));
+
+        verifyNoInteractions(tickets);
     }
 
     // ------------------------------------------------------------------
