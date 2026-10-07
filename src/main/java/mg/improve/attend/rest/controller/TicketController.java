@@ -4,6 +4,7 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.RefundRequest;
 import mg.improve.attend.domain.dto.response.CheckInResponse;
+import mg.improve.attend.domain.dto.response.PageAttendeeTicket;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
@@ -54,6 +55,19 @@ public class TicketController {
     public ResponseEntity<TicketDetail> getTicket(
             @AuthenticationPrincipal CustomUserDetails principal, @PathVariable UUID ticketId) {
         return ResponseEntity.ok(ticketService.getTicket(ticketId, principal.getId()));
+    }
+
+    @GetMapping("/events/{eventId}/tickets")
+    public ResponseEntity<PageAttendeeTicket> listEventTickets(
+            @AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId,
+            @RequestParam(name = "status", required = false) TicketStatus status,
+            @RequestParam(name = "tierId", required = false) UUID tierId,
+            @RequestParam(name = "q", required = false) String q,
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "20") int size) {
+        return ResponseEntity.ok(ticketService.listEventTickets(
+                eventId, principal.getId(), status, tierId, q, page, size));
     }
 
     @PostMapping("/tickets/{ticketId}/check-in")

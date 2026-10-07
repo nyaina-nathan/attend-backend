@@ -51,6 +51,24 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
             Pageable pageable);
 
     /**
+     * A page of an event's tickets for the attendee list, optionally narrowed by status, tier
+     * and a case-insensitive owner name/username search. The owner and tier needed by the
+     * response are fetched eagerly so the page maps without an N+1.
+     */
+    // coalesce (rather than ":param is null or ...") so Postgres can infer the enum/UUID types
+    // of the optional parameters from the columns they are compared to.
+    @EntityGraph(attributePaths = {"owner", "tier"})
+    @Query("select t from JTicket t where t.tier.event.id = :eventId "
+            + "and t.ticketStatus = coalesce(:status, t.ticketStatus) "
+            + "and t.tier.id = coalesce(:tierId, t.tier.id) "
+            + "and (:q is null or lower(t.owner.fullName) like :q or lower(t.owner.username) like :q)")
+    Page<JTicket> findEventAttendees(@Param("eventId") UUID eventId,
+            @Param("status") TicketStatus status,
+            @Param("tierId") UUID tierId,
+            @Param("q") String q,
+            Pageable pageable);
+
+    /**
      * Loads a ticket with the associations needed to build its detail response in one query.
      */
     @EntityGraph(attributePaths = {"owner", "checkedBy", "tier", "tier.event"})

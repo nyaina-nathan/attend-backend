@@ -11,7 +11,9 @@ import java.util.UUID;
 
 import mg.improve.attend.TestcontainersConfiguration;
 import mg.improve.attend.domain.dto.request.RefundRequest;
+import mg.improve.attend.domain.dto.response.AttendeeTicket;
 import mg.improve.attend.domain.dto.response.CheckInResponse;
+import mg.improve.attend.domain.dto.response.PageAttendeeTicket;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
@@ -716,6 +718,152 @@ class TicketControllerIT extends IntegrationTestSupport {
         JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
 
         HttpResponse<String> response = call(HttpMethod.POST, "/api/tickets/" + ticket.getId() + "/refund",
+                null, new HttpHeaders());
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    // ------------------------------------------------------------------
+    // GET /api/events/{eventId}/tickets
+    // ------------------------------------------------------------------
+
+    @Test
+    void listEventTickets_returnsAttendeesForOrganizer() {
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        JTicket ticket = seedTicket(creator, tier, TicketStatus.VALID);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/tickets",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        PageAttendeeTicket body = readBody(response, PageAttendeeTicket.class);
+        assertThat(body.totalElements()).isEqualTo(1);
+        assertThat(body.content()).hasSize(1);
+        assertThat(body.content().get(0).id()).isEqualTo(ticket.getId());
+        assertThat(body.content().get(0).owner().username()).isEqualTo("creator");
+        assertThat(body.content().get(0).tier().tierName()).isEqualTo("VIP");
+    }
+
+    @Test
+    void listEventTickets_filtersByStatusAndTier() {
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier vip = seedTier(event, "VIP", "40.00", 10);
+        JTicketTier standard = seedTier(event, "Standard", "10.00", 10);
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        seedTicket(creator, vip, TicketStatus.VALID);
+        JTicket cancelled = seedTicket(creator, standard, TicketStatus.CANCELLED);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> byStatus = call(HttpMethod.GET,
+                "/api/events/" + event.getId() + "/tickets?status=CANCELLED", null, auth);
+        HttpResponse<String> byTier = call(HttpMethod.GET,
+                "/api/events/" + event.getId() + "/tickets?tierId=" + vip.getId(), null, auth);
+
+        assertThat(readBody(byStatus, PageAttendeeTicket.class).content()).extracting(AttendeeTicket::id)
+                .containsExactly(cancelled.getId());
+        assertThat(readBody(byTier, PageAttendeeTicket.class).content()).hasSize(1);
+        assertThat(readBody(byTier, PageAttendeeTicket.class).content().get(0).tier().tierName())
+                .isEqualTo("VIP");
+    }
+
+    @Test
+    void listEventTickets_searchesByOwnerNameOrUsername() {
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        seedOrganizer(admin, event, EventRole.ADMIN);
+
+        register("alice@example.com", "secret123", "Alice Doe", "alice");
+        JUsers alice = users.findByEmail("alice@example.com").orElseThrow();
+        register("bob@example.com", "secret123", "Bob Roe", "bob");
+        JUsers bob = users.findByEmail("bob@example.com").orElseThrow();
+        JTicket aliceTicket = seedTicket(alice, tier, TicketStatus.VALID);
+        JTicket bobTicket = seedTicket(bob, tier, TicketStatus.VALID);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> byUsername = call(HttpMethod.GET,
+                "/api/events/" + event.getId() + "/tickets?q=ALICE", null, auth);
+        HttpResponse<String> byName = call(HttpMethod.GET,
+                "/api/events/" + event.getId() + "/tickets?q=roe", null, auth);
+
+        assertThat(readBody(byUsername, PageAttendeeTicket.class).content()).extracting(AttendeeTicket::id)
+                .containsExactly(aliceTicket.getId());
+        assertThat(readBody(byName, PageAttendeeTicket.class).content()).extracting(AttendeeTicket::id)
+                .containsExactly(bobTicket.getId());
+    }
+
+    @Test
+    void listEventTickets_ordersByIssuanceAndPaginates() {
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        seedOrganizer(admin, event, EventRole.ADMIN);
+
+        JUsers alice = seedUser("alice@example.com", "alice", "secret123");
+        JTicket first = seedTicket(creator, tier, TicketStatus.VALID);
+        JTicket second = seedTicket(alice, tier, TicketStatus.VALID);
+        // Make issuance order explicit; creation timestamps can tie at microsecond resolution.
+        jdbcTemplate.update("update ticket set created_at = now() - interval '1 hour' where id = ?",
+                first.getId());
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> firstPage = call(HttpMethod.GET,
+                "/api/events/" + event.getId() + "/tickets?page=0&size=1", null, auth);
+
+        PageAttendeeTicket body = readBody(firstPage, PageAttendeeTicket.class);
+        assertThat(body.totalElements()).isEqualTo(2);
+        assertThat(body.totalPages()).isEqualTo(2);
+        assertThat(body.content()).extracting(AttendeeTicket::id).containsExactly(first.getId());
+    }
+
+    @Test
+    void listEventTickets_rejectsNonOrganizer() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        seedTicket(creator, tier, TicketStatus.VALID);
+
+        HttpResponse<String> otherReg = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(otherReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/tickets",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_AN_ORGANIZER");
+    }
+
+    @Test
+    void listEventTickets_returnsNotFoundForUnknownEvent() {
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + UUID.randomUUID() + "/tickets",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("EVENT_NOT_FOUND");
+    }
+
+    @Test
+    void listEventTickets_requiresAuthentication() {
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId() + "/tickets",
                 null, new HttpHeaders());
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
