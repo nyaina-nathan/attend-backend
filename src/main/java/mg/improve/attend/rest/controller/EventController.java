@@ -8,6 +8,7 @@ import mg.improve.attend.domain.dto.request.AddOrganizerRequest;
 import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
+import mg.improve.attend.domain.dto.response.EventStats;
 import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.enums.EventStatus;
@@ -74,6 +75,12 @@ public class EventController {
     public ResponseEntity<List<Organizer>> listOrganizers(@AuthenticationPrincipal CustomUserDetails principal,
             @PathVariable UUID eventId) {
         return ResponseEntity.ok(eventService.listOrganizers(eventId, principal.getId()));
+    }
+
+    @GetMapping("/{eventId}/stats")
+    public ResponseEntity<EventStats> getEventStats(@AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID eventId) {
+        return ResponseEntity.ok(eventService.getEventStats(eventId, principal.getId()));
     }
 
     @PostMapping("/{eventId}/organizers")

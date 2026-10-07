@@ -1,5 +1,6 @@
 package mg.improve.attend.repository;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
@@ -26,6 +27,22 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
             + "where t.tier.event.id = :eventId and t.ticketStatus in :statuses group by t.tier.id")
     List<TierIssued> countIssuedByTier(@Param("eventId") UUID eventId,
             @Param("statuses") Collection<TicketStatus> statuses);
+
+    /**
+     * Per-tier statistics for an event: tickets issued ({@code count}), of which checked in
+     * ({@code USED}), and their revenue ({@code price_paid} sum). Restricted to the
+     * capacity-consuming statuses, so cancelled and refunded tickets are excluded. Tiers with no
+     * such ticket simply have no row.
+     */
+    @Query("select t.tier.id as tierId, count(t) as issued, "
+            + "sum(case when t.ticketStatus = :usedStatus then 1 else 0 end) as checkedIn, "
+            + "sum(t.pricePaid) as revenue "
+            + "from JTicket t "
+            + "where t.tier.event.id = :eventId and t.ticketStatus in :statuses "
+            + "group by t.tier.id")
+    List<TierAggregate> aggregateByTier(@Param("eventId") UUID eventId,
+            @Param("statuses") Collection<TicketStatus> statuses,
+            @Param("usedStatus") TicketStatus usedStatus);
 
     boolean existsByTier_Event_Id(UUID eventId);
 
@@ -104,6 +121,17 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
         UUID getTierId();
 
         long getIssued();
+    }
+
+    /** Projection of {@link #aggregateByTier(UUID, Collection, TicketStatus)}. */
+    interface TierAggregate {
+        UUID getTierId();
+
+        long getIssued();
+
+        long getCheckedIn();
+
+        BigDecimal getRevenue();
     }
 
     @Modifying
