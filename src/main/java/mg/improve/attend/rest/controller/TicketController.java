@@ -3,6 +3,7 @@ package mg.improve.attend.rest.controller;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.response.PageTicket;
+import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.security.CustomUserDetails;
@@ -44,5 +45,11 @@ public class TicketController {
             @RequestParam(name = "size", defaultValue = "20") int size) {
         return ResponseEntity.ok(
                 ticketService.listMyTickets(principal.getId(), status, upcoming, page, size));
+    }
+
+    @GetMapping("/tickets/{ticketId}")
+    public ResponseEntity<TicketDetail> getTicket(
+            @AuthenticationPrincipal CustomUserDetails principal, @PathVariable UUID ticketId) {
+        return ResponseEntity.ok(ticketService.getTicket(ticketId, principal.getId()));
     }
 }

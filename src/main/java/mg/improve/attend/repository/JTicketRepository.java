@@ -3,6 +3,7 @@ package mg.improve.attend.repository;
 import java.time.Instant;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.repository.entities.JTicket;
@@ -47,6 +48,13 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
             @Param("upcoming") boolean upcoming,
             @Param("now") Instant now,
             Pageable pageable);
+
+    /**
+     * Loads a ticket with the associations needed to build its detail response in one query.
+     */
+    @EntityGraph(attributePaths = {"owner", "checkedBy", "tier", "tier.event"})
+    @Query("select t from JTicket t where t.id = :id")
+    Optional<JTicket> findDetailById(@Param("id") UUID id);
 
     interface TierIssued {
         UUID getTierId();

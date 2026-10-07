@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import mg.improve.attend.TestcontainersConfiguration;
 import mg.improve.attend.domain.dto.response.PageTicket;
+import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
@@ -309,6 +310,115 @@ class TicketControllerIT extends IntegrationTestSupport {
     }
 
     // ------------------------------------------------------------------
+    // GET /api/tickets/{ticketId}
+    // ------------------------------------------------------------------
+
+    @Test
+    void getTicket_returnsBaseDetailForOwner() {
+        HttpResponse<String> ownerReg = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        // A separate creator so the ticket owner is not also an organizer of the event.
+        JUsers creator = seedUser("creator@example.com", "creator", "secret123");
+        JEvents event = seedEvent(creator, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(owner, tier, TicketStatus.VALID);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(ownerReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tickets/" + ticket.getId(), null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        TicketDetail body = readBody(response, TicketDetail.class);
+        assertThat(body.id()).isEqualTo(ticket.getId());
+        assertThat(body.event().id()).isEqualTo(event.getId());
+        assertThat(body.tier().tierName()).isEqualTo("VIP");
+        assertThat(body.pricePaid()).isEqualByComparingTo("40.00");
+        assertThat(body.owner()).isNull();
+        assertThat(body.checkedBy()).isNull();
+    }
+
+    @Test
+    void getTicket_includesOwnerForOrganizer() {
+        HttpResponse<String> ownerReg = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(owner, tier, TicketStatus.VALID);
+
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tickets/" + ticket.getId(), null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        TicketDetail body = readBody(response, TicketDetail.class);
+        assertThat(body.owner()).isNotNull();
+        assertThat(body.owner().id()).isEqualTo(owner.getId());
+        assertThat(body.owner().username()).isEqualTo("owner");
+        assertThat(body.checkedBy()).isNull();
+    }
+
+    @Test
+    void getTicket_includesCheckedByForOrganizer() {
+        HttpResponse<String> ownerReg = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+
+        HttpResponse<String> adminReg = register("admin@example.com", "secret123", "Admin", "admin");
+        JUsers admin = users.findByEmail("admin@example.com").orElseThrow();
+        seedOrganizer(admin, event, EventRole.ADMIN);
+        JTicket ticket = seedCheckedInTicket(owner, tier, admin);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(adminReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tickets/" + ticket.getId(), null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        TicketDetail body = readBody(response, TicketDetail.class);
+        assertThat(body.ticketStatus()).isEqualTo(TicketStatus.USED);
+        assertThat(body.checkedBy()).isNotNull();
+        assertThat(body.checkedBy().id()).isEqualTo(admin.getId());
+        assertThat(body.checkedBy().username()).isEqualTo("admin");
+    }
+
+    @Test
+    void getTicket_rejectsNonOwnerNonOrganizer() {
+        HttpResponse<String> ownerReg = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        JTicket ticket = seedTicket(owner, tier, TicketStatus.VALID);
+
+        HttpResponse<String> otherReg = register("other@example.com", "secret123", "Other", "other");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(otherReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tickets/" + ticket.getId(), null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("TICKET_FORBIDDEN");
+    }
+
+    @Test
+    void getTicket_returnsNotFoundForUnknownTicket() {
+        HttpResponse<String> ownerReg = register("owner@example.com", "secret123", "Owner", "owner");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(ownerReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tickets/" + UUID.randomUUID(), null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("TICKET_NOT_FOUND");
+    }
+
+    @Test
+    void getTicket_requiresAuthentication() {
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tickets/" + UUID.randomUUID(), null,
+                new HttpHeaders());
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    // ------------------------------------------------------------------
     // fixtures
     // ------------------------------------------------------------------
 
@@ -350,6 +460,17 @@ class TicketControllerIT extends IntegrationTestSupport {
         ticket.setTier(tier);
         ticket.setPricePaid(tier.getPrice());
         ticket.setTicketStatus(status);
+        return tickets.saveAndFlush(ticket);
+    }
+
+    private JTicket seedCheckedInTicket(JUsers owner, JTicketTier tier, JUsers scanner) {
+        JTicket ticket = new JTicket();
+        ticket.setOwner(owner);
+        ticket.setTier(tier);
+        ticket.setCheckedBy(scanner);
+        ticket.setPricePaid(tier.getPrice());
+        ticket.setTicketStatus(TicketStatus.USED);
+        ticket.setCheckedInAt(Instant.now());
         return tickets.saveAndFlush(ticket);
     }
 }
