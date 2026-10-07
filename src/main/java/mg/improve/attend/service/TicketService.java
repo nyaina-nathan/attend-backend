@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketResponse;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
@@ -17,6 +18,11 @@ import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.repository.entities.JTicket;
 import mg.improve.attend.repository.entities.JTicketTier;
 import mg.improve.attend.repository.entities.JUsers;
+import mg.improve.attend.validator.TicketValidator;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -36,6 +42,7 @@ public class TicketService {
     private final JTicketRepository tickets;
     private final JUsersRepository users;
     private final TicketMapper ticketMapper;
+    private final TicketValidator validator;
 
     /**
      * Issues a {@code VALID} ticket to the caller. Runs in one transaction and locks the tier
@@ -71,5 +78,30 @@ public class TicketService {
         JTicket saved = tickets.saveAndFlush(ticket);
 
         return TicketResponse.from(ticketMapper.toDomain(saved));
+    }
+
+    /**
+     * Lists the caller's own tickets, earliest event first, optionally narrowed to a status and
+     * to events that have not started yet. Paginated.
+     */
+    @Transactional(readOnly = true)
+    public PageTicket listMyTickets(UUID userId, TicketStatus status, boolean upcoming, int page, int size) {
+        validator.validateListQuery(page, size);
+
+        Pageable pageable = PageRequest.of(page, size,
+                Sort.by(Sort.Order.asc("tier.event.startTime"), Sort.Order.asc("createdAt")));
+        Page<JTicket> result = tickets.findMyTickets(userId, status, upcoming, Instant.now(), pageable);
+
+        List<TicketResponse> content = result.getContent().stream()
+                .map(ticketMapper::toDomain)
+                .map(TicketResponse::from)
+                .toList();
+
+        return new PageTicket(
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                content);
     }
 }
