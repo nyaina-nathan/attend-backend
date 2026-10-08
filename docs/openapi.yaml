@@ -292,6 +292,41 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /users/me/dashboard:
+    get:
+      tags: [Users]
+      summary: Get the dashboard for the current user
+      description: |
+        Aggregated data for the dashboard home page in a single call: the caller's
+        organizer activity and their attendee activity. The month calendar is not
+        included; use `GET /events?isMine=true&from=&to=` for that.
+
+        Definitions:
+        - **Upcoming event**: `endTime > now` and status `OK` or `POSTPONED`. An event
+          that is currently happening still counts as upcoming.
+        - **Counted tickets**: tickets in `VALID` or `USED`; `CANCELLED` and `REFUNDED`
+          are ignored.
+        - **Organizing**: events where the caller is `CREATOR` or `ADMIN`.
+
+        The response is per-user and must not be cached: it is served with
+        `Cache-Control: no-store`. An inactive user gets zeroed counters, empty
+        `attention`, and `null` `nextEvent`/`nextTicket`.
+      operationId: getDashboard
+      responses:
+        '200':
+          description: Aggregated organizer and attendee data.
+          headers:
+            Cache-Control:
+              description: Always `no-store`, because the response is per-user.
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DashboardResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /events:
     post:
       tags: [Events]
@@ -1324,6 +1359,138 @@ components:
         dateBirth:
           type: string
           format: date
+
+    AttentionType:
+      type: string
+      description: |
+        Rule that produced an attention item. Clients should ignore unknown values so
+        new rules can be added later.
+      enum: [NO_TIERS, LOW_STOCK, POSTPONED]
+
+    AttentionItem:
+      type: object
+      required: [type, eventId, eventTitle, startTime]
+      description: |
+        One entry of `organizing.attention`. `tierId`/`tierName`/`remaining` are only
+        present for `LOW_STOCK`; `ticketsIssued` only for `POSTPONED`.
+      properties:
+        type:
+          $ref: '#/components/schemas/AttentionType'
+        eventId:
+          type: string
+          format: uuid
+        eventTitle:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        tierId:
+          type: string
+          format: uuid
+        tierName:
+          type: string
+        remaining:
+          type: integer
+          minimum: 1
+        ticketsIssued:
+          type: integer
+          minimum: 0
+
+    NextOrganizingEvent:
+      type: object
+      required:
+        [id, title, startTime, endTime, status, myRole, totalCapacity, ticketsIssued,
+         ticketsCheckedIn]
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+        startTime:
+          type: string
+          format: date-time
+        endTime:
+          type: string
+          format: date-time
+        location:
+          oneOf:
+            - type: string
+            - type: 'null'
+        status:
+          $ref: '#/components/schemas/EventStatus'
+        myRole:
+          $ref: '#/components/schemas/EventRole'
+        totalCapacity:
+          type: integer
+          minimum: 0
+        ticketsIssued:
+          type: integer
+          minimum: 0
+        ticketsCheckedIn:
+          type: integer
+          minimum: 0
+
+    OrganizingDashboard:
+      type: object
+      required: [eventsTotal, eventsUpcoming, ticketsSold, revenue, attention]
+      properties:
+        eventsTotal:
+          type: integer
+          minimum: 0
+        eventsUpcoming:
+          type: integer
+          minimum: 0
+        ticketsSold:
+          type: integer
+          minimum: 0
+        revenue:
+          type: number
+          format: double
+          minimum: 0
+        nextEvent:
+          oneOf:
+            - $ref: '#/components/schemas/NextOrganizingEvent'
+            - type: 'null'
+        attention:
+          type: array
+          items:
+            $ref: '#/components/schemas/AttentionItem'
+
+    NextTicket:
+      type: object
+      required: [id, event, tier, ticketStatus]
+      properties:
+        id:
+          type: string
+          format: uuid
+        event:
+          $ref: '#/components/schemas/TicketEventRef'
+        tier:
+          $ref: '#/components/schemas/TicketTierRef'
+        ticketStatus:
+          $ref: '#/components/schemas/TicketStatus'
+
+    AttendingDashboard:
+      type: object
+      required: [ticketsUpcoming]
+      properties:
+        ticketsUpcoming:
+          type: integer
+          minimum: 0
+        nextTicket:
+          oneOf:
+            - $ref: '#/components/schemas/NextTicket'
+            - type: 'null'
+
+    DashboardResponse:
+      type: object
+      required: [organizing, attending]
+      properties:
+        organizing:
+          $ref: '#/components/schemas/OrganizingDashboard'
+        attending:
+          $ref: '#/components/schemas/AttendingDashboard'
 
     # ----------------------------------------------------------------- events
     EventStatus:
