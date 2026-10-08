@@ -6,6 +6,7 @@ import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.repository.entities.JTicket;
 import mg.improve.attend.repository.entities.JUsers;
@@ -43,6 +44,52 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
     List<TierAggregate> aggregateByTier(@Param("eventId") UUID eventId,
             @Param("statuses") Collection<TicketStatus> statuses,
             @Param("usedStatus") TicketStatus usedStatus);
+
+    /**
+     * Dashboard organizer sales, scoped to the caller's upcoming events: the number of counted
+     * tickets ({@code VALID}/{@code USED}) and the sum of their {@code price_paid}. Revenue is
+     * {@code null} only when there are no counted tickets.
+     */
+    @Query("select count(t) as ticketsSold, sum(t.pricePaid) as revenue from JTicket t "
+            + "where t.ticketStatus in :statuses "
+            + "and t.tier.event.endTime > :now "
+            + "and t.tier.event.status in :upcomingStatuses "
+            + "and exists (select o.event.id from JEventOrganizer o "
+            + "where o.event = t.tier.event and o.user.id = :userId)")
+    OrganizingSales aggregateOrganizingSales(@Param("userId") UUID userId,
+            @Param("now") Instant now,
+            @Param("upcomingStatuses") Collection<EventStatus> upcomingStatuses,
+            @Param("statuses") Collection<TicketStatus> statuses);
+
+    /**
+     * Dashboard attendee counter: the caller's {@code VALID} tickets whose event is still
+     * upcoming.
+     */
+    @Query("select count(t) from JTicket t where t.owner.id = :userId "
+            + "and t.ticketStatus = :status "
+            + "and t.tier.event.endTime > :now "
+            + "and t.tier.event.status in :upcomingStatuses")
+    long countUpcomingTickets(@Param("userId") UUID userId,
+            @Param("now") Instant now,
+            @Param("upcomingStatuses") Collection<EventStatus> upcomingStatuses,
+            @Param("status") TicketStatus status);
+
+    /**
+     * The caller's {@code VALID} tickets on upcoming events, earliest-starting event first, so
+     * the first row is the next ticket. Associations needed to build the response are fetched
+     * eagerly.
+     */
+    @EntityGraph(attributePaths = {"tier", "tier.event"})
+    @Query("select t from JTicket t where t.owner.id = :userId "
+            + "and t.ticketStatus = :status "
+            + "and t.tier.event.endTime > :now "
+            + "and t.tier.event.status in :upcomingStatuses "
+            + "order by t.tier.event.startTime asc, t.createdAt asc")
+    List<JTicket> findNextUpcomingTicket(@Param("userId") UUID userId,
+            @Param("now") Instant now,
+            @Param("upcomingStatuses") Collection<EventStatus> upcomingStatuses,
+            @Param("status") TicketStatus status,
+            Pageable pageable);
 
     boolean existsByTier_Event_Id(UUID eventId);
 
@@ -121,6 +168,13 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
         UUID getTierId();
 
         long getIssued();
+    }
+
+    /** Projection of {@link #aggregateOrganizingSales(UUID, Instant, Collection, Collection)}. */
+    interface OrganizingSales {
+        long getTicketsSold();
+
+        BigDecimal getRevenue();
     }
 
     /** Projection of {@link #aggregateByTier(UUID, Collection, TicketStatus)}. */
