@@ -81,6 +81,7 @@ changing an endpoint.
 | POST | `/auth/register`, `/auth/login`, `/auth/refresh` | public |
 | POST | `/auth/logout` | 🔒 |
 | GET / PATCH / DELETE | `/users/me` | 🔒 |
+| GET | `/users/me/dashboard` | 🔒 |
 | POST | `/users/me/password` | 🔒 |
 | POST | `/events` | 🔒 |
 | GET | `/events`, `/events/{eventId}`, `/events/{eventId}/tiers` | optional (visibility rules apply) |

@@ -201,6 +201,101 @@ Removes the user's refresh tokens, `event_organizer` rows and owned tickets. Eve
 
 Response `204`. Errors: `401`.
 
+### GET `/users/me/dashboard` 🔒
+Aggregated data for the dashboard home page, in a single call. Covers the caller's organizer
+activity and their attendee activity. The month calendar is not part of it: use
+`GET /events?isMine=true&from=&to=` for that. The response is per-user and is returned with
+`Cache-Control: no-store`.
+
+Definitions used below:
+- **Upcoming event**: `endTime > now` and `status` is `OK` or `POSTPONED`. An event that is
+  currently happening still counts as upcoming.
+- **Counted tickets**: tickets in `VALID` or `USED` (same rule as `remaining`). `CANCELLED` and
+  `REFUNDED` tickets are ignored.
+- **Organizing**: events where the caller is `CREATOR` or `ADMIN`.
+
+Response `200`:
+```json
+{
+  "organizing": {
+    "eventsTotal": 12,
+    "eventsUpcoming": 3,
+    "ticketsSold": 214,
+    "revenue": 3450.00,
+    "nextEvent": {
+      "id": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
+      "title": "Tana Jazz Night",
+      "startTime": "2026-11-20T18:00:00Z",
+      "endTime": "2026-11-20T22:00:00Z",
+      "location": "Antananarivo, Alliance Française",
+      "status": "OK",
+      "myRole": "CREATOR",
+      "totalCapacity": 250,
+      "ticketsIssued": 107,
+      "ticketsCheckedIn": 0
+    },
+    "attention": [
+      {
+        "type": "NO_TIERS",
+        "eventId": "b7a1d2c3-0000-4000-8000-000000000002",
+        "eventTitle": "Open Mic",
+        "startTime": "2026-11-12T17:00:00Z"
+      },
+      {
+        "type": "LOW_STOCK",
+        "eventId": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
+        "eventTitle": "Tana Jazz Night",
+        "startTime": "2026-11-20T18:00:00Z",
+        "tierId": "a1b2c3d4-0000-4000-8000-000000000001",
+        "tierName": "VIP",
+        "remaining": 3
+      }
+    ]
+  },
+  "attending": {
+    "ticketsUpcoming": 2,
+    "nextTicket": {
+      "id": "7d9e1f2a-4b3c-4d5e-8f6a-1b2c3d4e5f60",
+      "event": {
+        "id": "c4d5e6f7-0000-4000-8000-000000000003",
+        "title": "Antsirabe Food Fair",
+        "startTime": "2026-12-05T09:00:00Z",
+        "location": "Antsirabe"
+      },
+      "tier": { "id": "a1b2c3d4-0000-4000-8000-000000000009", "tierName": "Standard" },
+      "ticketStatus": "VALID"
+    }
+  }
+}
+```
+
+Fields:
+- `organizing.eventsTotal`: all events the caller organizes, whatever their status.
+- `organizing.eventsUpcoming`: count of upcoming events.
+- `organizing.ticketsSold` and `revenue`: counted tickets and the sum of `price_paid`, **scoped
+  to upcoming events only**.
+- `organizing.nextEvent`: the upcoming event with the earliest `startTime`, or `null` if none.
+  The counters use the same rules as `GET /events/{eventId}/stats`.
+- `organizing.attention`: at most 5 items, ordered by `startTime` ascending. Each item has a
+  `type`:
+
+  | `type` | Condition | Extra fields |
+  |---|---|---|
+  | `NO_TIERS` | Upcoming `OK` event starting within 7 days with no tiers | none |
+  | `LOW_STOCK` | A tier of an upcoming `OK` event with `remaining <= 10` and `remaining > 0` | `tierId`, `tierName`, `remaining` |
+  | `POSTPONED` | `POSTPONED` event that still has counted tickets | `ticketsIssued` |
+
+  Items always include `eventId`, `eventTitle` and `startTime`. Clients should ignore unknown
+  `type` values so new rules can be added later.
+- `attending.ticketsUpcoming`: caller's `VALID` tickets for upcoming events.
+- `attending.nextTicket`: the `VALID` ticket whose event starts earliest among upcoming events,
+  or `null`.
+
+A caller with no activity gets zeroed counters, `nextEvent: null`, `nextTicket: null` and
+`attention: []`, never an error.
+
+Errors: `401`.
+
 ---
 
 ## 3. Events
@@ -544,6 +639,7 @@ Response `200`:
 | POST | `/auth/refresh` | refresh cookie | anyone |
 | POST | `/auth/logout` | 🔒 | user |
 | GET / PATCH / DELETE | `/users/me` | 🔒 | user |
+| GET | `/users/me/dashboard` | 🔒 | user |
 | POST | `/users/me/password` | 🔒 | user |
 | POST | `/events` | 🔒 | user |
 | GET | `/events` | optional | public; `isMine=true` for the caller's organized events |
