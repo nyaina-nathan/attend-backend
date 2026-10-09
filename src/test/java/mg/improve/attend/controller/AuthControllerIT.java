@@ -51,7 +51,7 @@ class AuthControllerIT extends IntegrationTestSupport {
         assertThat(access.getPath()).isEqualTo("/");
         assertThat(refresh).isNotNull();
         assertThat(refresh.isHttpOnly()).isTrue();
-        assertThat(refresh.getPath()).isEqualTo("/api/auth");
+        assertThat(refresh.getPath()).isEqualTo("/");
 
         var persisted = users.findByEmail("user@example.com").orElseThrow();
         assertThat(persisted.getPasswordHash()).isNotEqualTo("secret123").startsWith("$2");

@@ -10,8 +10,7 @@ import org.springframework.stereotype.Component;
 /**
  * Turns freshly issued tokens into the {@code HttpOnly} auth cookies described by the API.
  *
- * <p>The refresh cookie is scoped to {@code /api/auth} so it is only sent to the endpoints
- * that need it, while the access cookie is available to the whole application.
+ * <p>Both cookies are available to the whole application.
  */
 @Component
 public class AuthCookieFactory {
@@ -19,7 +18,7 @@ public class AuthCookieFactory {
     private static final String ACCESS_TOKEN_COOKIE = "access_token";
     private static final String REFRESH_TOKEN_COOKIE = "refresh_token";
     private static final String ACCESS_TOKEN_PATH = "/";
-    private static final String REFRESH_TOKEN_PATH = "/api/auth";
+    private static final String REFRESH_TOKEN_PATH = "/";
 
     private final CookieProperties properties;
 
