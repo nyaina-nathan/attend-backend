@@ -4,15 +4,19 @@ import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.InvitationCreateRequest;
 import mg.improve.attend.domain.dto.response.InvitationResponse;
+import mg.improve.attend.domain.dto.response.PageInvitation;
+import mg.improve.attend.domain.enums.InvitationStatus;
 import mg.improve.attend.security.CustomUserDetails;
 import mg.improve.attend.service.InvitationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
@@ -33,5 +37,24 @@ public class InvitationController {
             @RequestBody InvitationCreateRequest request) {
         InvitationResponse created = invitationService.createInvitation(eventId, principal.getId(), request);
         return ResponseEntity.status(HttpStatus.CREATED).body(created);
+    }
+
+    @GetMapping("/invitations")
+    public ResponseEntity<PageInvitation> listInvitations(
+            @AuthenticationPrincipal CustomUserDetails principal,
+            @RequestParam(name = "direction", defaultValue = "received") String direction,
+            @RequestParam(name = "status", required = false) InvitationStatus status,
+            @RequestParam(name = "page", defaultValue = "0") int page,
+            @RequestParam(name = "size", defaultValue = "20") int size,
+            @RequestParam(name = "sort", defaultValue = "createdAt,desc") String sort) {
+        return ResponseEntity.ok(invitationService.listInvitations(
+                principal.getId(), direction, status, page, size, sort));
+    }
+
+    @GetMapping("/invitations/{invitationId}")
+    public ResponseEntity<InvitationResponse> getInvitation(
+            @AuthenticationPrincipal CustomUserDetails principal,
+            @PathVariable UUID invitationId) {
+        return ResponseEntity.ok(invitationService.getInvitation(invitationId, principal.getId()));
     }
 }

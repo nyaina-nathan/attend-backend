@@ -1,11 +1,15 @@
 package mg.improve.attend.service;
 
+import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.InvitationCreateRequest;
 import mg.improve.attend.domain.dto.response.InvitationResponse;
+import mg.improve.attend.domain.dto.response.PageInvitation;
 import mg.improve.attend.domain.entity.Invitation;
 import mg.improve.attend.domain.enums.EventRole;
+import mg.improve.attend.domain.enums.InvitationDirection;
 import mg.improve.attend.domain.enums.InvitationStatus;
 import mg.improve.attend.domain.mapper.InvitationMapper;
 import mg.improve.attend.exceptions.ConflictException;
@@ -19,6 +23,10 @@ import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.repository.entities.JInvitation;
 import mg.improve.attend.repository.entities.JUsers;
 import mg.improve.attend.validator.InvitationValidator;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -73,6 +81,54 @@ public class InvitationService {
         JInvitation saved = invitations.saveAndFlush(invitation);
         Invitation domain = invitationMapper.toDomain(saved);
         return InvitationResponse.from(domain);
+    }
+
+    /**
+     * Lists the caller's invitations, most recent first by default. {@code direction} selects
+     * the side ({@code received}, {@code sent} or {@code all}) and {@code status} optionally
+     * narrows by invitation status. Paginated.
+     */
+    @Transactional(readOnly = true)
+    public PageInvitation listInvitations(UUID userId, String direction, InvitationStatus status,
+            int page, int size, String sort) {
+        Sort resolvedSort = validator.validateListQuery(page, size, sort, direction);
+        InvitationDirection resolvedDirection =
+                InvitationDirection.valueOf(direction.trim().toUpperCase(Locale.ROOT));
+        Pageable pageable = PageRequest.of(page, size, resolvedSort);
+
+        Page<JInvitation> result =
+                invitations.findForUser(userId, resolvedDirection.name(), status, pageable);
+
+        List<InvitationResponse> content = result.getContent().stream()
+                .map(invitationMapper::toDomain)
+                .map(InvitationResponse::from)
+                .toList();
+
+        return new PageInvitation(
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                content);
+    }
+
+    /**
+     * Returns an invitation to its sender or its receiver. A caller who is neither gets
+     * {@code 403}.
+     */
+    @Transactional(readOnly = true)
+    public InvitationResponse getInvitation(UUID invitationId, UUID userId) {
+        JInvitation invitation = invitations.findDetailById(invitationId)
+                .orElseThrow(() -> new NotFoundException("INVITATION_NOT_FOUND", "Invitation not found"));
+
+        boolean sender = invitation.getSender().getId().equals(userId);
+        boolean receiver = invitation.getReceiver().getId().equals(userId);
+        if (!sender && !receiver) {
+            throw new ForbiddenException("INVITATION_FORBIDDEN",
+                    "Caller is neither the sender nor the receiver of this invitation");
+        }
+
+        return InvitationResponse.from(invitationMapper.toDomain(invitation));
     }
 
     private JUsers resolveUser(InvitationCreateRequest request) {
