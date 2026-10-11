@@ -131,6 +131,20 @@ public class InvitationService {
         return InvitationResponse.from(invitationMapper.toDomain(invitation));
     }
 
+    /**
+     * Deletes an invitation. Sender (the event's creator) only. Only the invitation record is
+     * removed: an already accepted invitation does not revoke the receiver's organizer row.
+     */
+    @Transactional
+    public void deleteInvitation(UUID invitationId, UUID userId) {
+        JInvitation invitation = invitations.findById(invitationId)
+                .orElseThrow(() -> new NotFoundException("INVITATION_NOT_FOUND", "Invitation not found"));
+        if (!invitation.getSender().getId().equals(userId)) {
+            throw new ForbiddenException("NOT_THE_SENDER", "Caller is not the sender of this invitation");
+        }
+        invitations.delete(invitation);
+    }
+
     private JUsers resolveUser(InvitationCreateRequest request) {
         if (request.username() != null && !request.username().isBlank()) {
             return users.findByUsername(request.username())
