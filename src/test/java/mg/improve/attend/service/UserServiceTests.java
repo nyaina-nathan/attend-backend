@@ -18,7 +18,9 @@ import java.util.Optional;
 import java.util.UUID;
 import mg.improve.attend.domain.dto.request.ChangePasswordRequest;
 import mg.improve.attend.domain.dto.request.UserUpdateRequest;
+import mg.improve.attend.domain.dto.response.PageUserResponse;
 import mg.improve.attend.domain.dto.response.UserMeResponse;
+import mg.improve.attend.domain.dto.response.UserResponse;
 import mg.improve.attend.domain.entity.Users;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.mapper.UsersMapper;
@@ -42,6 +44,9 @@ import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageImpl;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Sort;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
 
@@ -177,6 +182,55 @@ class UserServiceTests {
                     assertThat(ex.getCode()).isEqualTo("USER_NOT_FOUND");
                     assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
                 });
+    }
+
+    // ------------------------------------------------------------------
+    // searchUsers
+    // ------------------------------------------------------------------
+
+    @Test
+    void searchUsers_lowercasesPatternsAndMapsThePage() {
+        UUID userId = UUID.randomUUID();
+        JUsers entity = userEntity(userId);
+        Users domain = user(userId);
+        Sort sort = Sort.by("username");
+        when(validator.validateSearchQuery("Jane", null, 0, 20, "username,asc")).thenReturn(sort);
+        when(users.search("%jane%", null, PageRequest.of(0, 20, sort)))
+                .thenReturn(new PageImpl<>(List.of(entity), PageRequest.of(0, 20), 1));
+        when(usersMapper.toDomain(entity)).thenReturn(domain);
+
+        PageUserResponse response = userService.searchUsers("Jane", null, 0, 20, "username,asc");
+
+        assertThat(response.page()).isZero();
+        assertThat(response.size()).isEqualTo(20);
+        assertThat(response.totalElements()).isEqualTo(1);
+        assertThat(response.totalPages()).isEqualTo(1);
+        assertThat(response.content()).containsExactly(UserResponse.from(domain));
+    }
+
+    @Test
+    void searchUsers_passesBothPatternsWhenBothProvided() {
+        Sort sort = Sort.by("username");
+        when(validator.validateSearchQuery("jane", "acme", 0, 20, "username,asc")).thenReturn(sort);
+        when(users.search("%jane%", "%acme%", PageRequest.of(0, 20, sort)))
+                .thenReturn(new PageImpl<>(List.of(), PageRequest.of(0, 20), 0));
+
+        PageUserResponse response = userService.searchUsers("jane", "acme", 0, 20, "username,asc");
+
+        assertThat(response.content()).isEmpty();
+        assertThat(response.totalElements()).isZero();
+    }
+
+    @Test
+    void searchUsers_propagatesValidationFailure() {
+        doThrow(new BadRequestException("VALIDATION_ERROR", "Validation failed"))
+                .when(validator).validateSearchQuery(null, null, 0, 20, "username,asc");
+
+        assertThatExceptionOfType(BadRequestException.class)
+                .isThrownBy(() -> userService.searchUsers(null, null, 0, 20, "username,asc"))
+                .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("VALIDATION_ERROR"));
+
+        verifyNoInteractions(users);
     }
 
     // ------------------------------------------------------------------
