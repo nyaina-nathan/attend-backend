@@ -1875,12 +1875,12 @@ components:
     # ----------------------------------------------------------- invitations
     InvitationStatus:
       type: string
-      enum: [PENDING, ACCEPTED, REFUSED]
+      enum: [PENDING, ACCEPTED, DECLINED]
 
     InvitationDecision:
       type: string
       description: Decision the receiver can apply to a `PENDING` invitation.
-      enum: [ACCEPTED, REFUSED]
+      enum: [ACCEPTED, DECLINED]
 
     UserRef:
       type: object

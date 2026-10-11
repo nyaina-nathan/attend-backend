@@ -56,7 +56,7 @@ public class InvitationValidator {
         if (request.invitationStatus() == null) {
             details.add(new ErrorDetail("invitationStatus", "must not be null"));
         } else if (request.invitationStatus() == InvitationStatus.PENDING) {
-            details.add(new ErrorDetail("invitationStatus", "must be ACCEPTED or REFUSED"));
+            details.add(new ErrorDetail("invitationStatus", "must be ACCEPTED or DECLINED"));
         }
 
         if (!details.isEmpty()) {
