@@ -157,6 +157,37 @@ Response `204`.
 
 ## 2. Users
 
+### GET `/users` 🔒
+Searches users by a case-insensitive partial `username` and/or `email`. At least one of the two
+query parameters is required; when both are given, users matching either are returned. Paginated.
+
+Query parameters:
+- `username` — optional partial match on the username.
+- `email` — optional partial match on the email.
+- `page` (default `0`), `size` (default `20`, 1..100), `sort` (default `username,asc`; sortable
+  fields: `username`, `fullName`, `createdAt`).
+
+Response `200`:
+```json
+{
+  "page": 0,
+  "size": 20,
+  "totalElements": 1,
+  "totalPages": 1,
+  "content": [
+    {
+      "id": "0b6f1c5e-9d0a-4b7e-8f3a-2a1c6e9b7d10",
+      "email": "jane@example.com",
+      "fullName": "Jane Doe",
+      "username": "janedoe",
+      "dateBirth": "2000-05-14",
+      "createdAt": "2026-10-05T10:00:00Z"
+    }
+  ]
+}
+```
+Errors: `400` (neither `username` nor `email`, or invalid `page`/`size`/`sort`), `401`.
+
 ### GET `/users/me` 🔒
 Response `200`:
 ```json
@@ -705,6 +736,7 @@ Response `204`. Errors: `403` (not the sender), `404`.
 | POST | `/auth/login` | none | anyone |
 | POST | `/auth/refresh` | refresh cookie | anyone |
 | POST | `/auth/logout` | 🔒 | user |
+| GET | `/users` | 🔒 | user |
 | GET / PATCH / DELETE | `/users/me` | 🔒 | user |
 | GET | `/users/me/dashboard` | 🔒 | user |
 | POST | `/users/me/password` | 🔒 | user |
