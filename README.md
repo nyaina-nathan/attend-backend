@@ -1,9 +1,10 @@
 # attend
 
 A single-module Spring Boot REST backend for **events & ticketing**: users create events,
-define ticket tiers, issue tickets, check attendees in by scanning a ticket's QR code, and
-view per-event stats. Authentication is JWT-based over `HttpOnly` cookies, and roles are
-scoped **per event** rather than globally.
+define ticket tiers, issue tickets, check attendees in by scanning a ticket's QR code,
+view per-event stats, and invite others to co-organize their events as admins.
+Authentication is JWT-based over `HttpOnly` cookies, and roles are scoped **per event**
+rather than globally.
 
 ## Tech stack
 
@@ -88,6 +89,11 @@ changing an endpoint.
 | PATCH / POST cancel / DELETE | `/events/{eventId}` | creator |
 | GET / POST | `/events/{eventId}/organizers` | organizer / creator |
 | DELETE | `/events/{eventId}/organizers/{organizerId}` | creator |
+| POST | `/events/{eventId}/invitations` | creator |
+| GET | `/invitations` | 🔒 |
+| GET | `/invitations/{invitationId}` | sender or receiver |
+| PATCH | `/invitations/{invitationId}` | receiver |
+| DELETE | `/invitations/{invitationId}` | sender |
 | POST | `/events/{eventId}/tiers` | organizer |
 | PATCH / DELETE | `/tiers/{tierId}` | organizer |
 | POST | `/tiers/{tierId}/tickets` | user |
@@ -95,6 +101,10 @@ changing an endpoint.
 | POST | `/tickets/{ticketId}/check-in`, `/refund` | organizer |
 | POST | `/tickets/{ticketId}/cancel` | owner |
 | GET | `/events/{eventId}/tickets`, `/events/{eventId}/stats` | organizer |
+
+Invitations are consent-based: the creator invites a user to become an `ADMIN`; the receiver
+accepts (which grants organizer access) or declines. Only a `PENDING` invitation can be
+answered.
 
 ## Testing
 
