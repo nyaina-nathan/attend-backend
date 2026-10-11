@@ -630,7 +630,74 @@ Response `200`:
 
 ---
 
-## 7. Endpoint summary
+## 7. Invitations
+
+`invitationStatus`: `PENDING` | `ACCEPTED` | `REFUSED`
+
+Invitations are how a `CREATOR` recruits `ADMIN`s for an event. The creator invites a user; the invited user accepts (becoming an `ADMIN` in `event_organizer`) or refuses. Only a user who does not already organize the event can be invited, and the creator cannot be invited. Inviting does not by itself grant any access: the receiver becomes an organizer only once they accept.
+
+### POST `/events/{eventId}/invitations` 🔒
+`CREATOR` only. Invites a user to become an `ADMIN`. Provide either `username` or `email`.
+
+Request:
+```json
+{
+  "username": "johnsmith"
+}
+```
+(Alternative: `"email"`.)
+
+Response `201`:
+```json
+{
+  "id": "d4f9e2a1-0000-4000-8000-000000000010",
+  "event": {
+    "id": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
+    "title": "Tana Jazz Night",
+    "startTime": "2026-11-20T18:00:00Z",
+    "location": "Antananarivo, Alliance Française"
+  },
+  "sender": { "id": "0b6f1c5e-9d0a-4b7e-8f3a-2a1c6e9b7d10", "fullName": "Jane Doe", "username": "janedoe" },
+  "receiver": { "id": "9a8b7c6d-0000-4000-8000-000000000009", "fullName": "John Smith", "username": "johnsmith" },
+  "invitationStatus": "PENDING",
+  "createdAt": "2026-10-05T10:00:00Z"
+}
+```
+Errors: `400` (neither or both of `username`/`email`), `403` (`NOT_THE_CREATOR`), `404` (event or user not found), `409` (`ALREADY_ORGANIZER` the target already organizes this event, `ALREADY_INVITED` a `PENDING` invitation already exists for the target, `CANNOT_INVITE_CREATOR` the target is the creator/self).
+
+### GET `/invitations` 🔒
+The caller's invitations.
+
+Query params: `direction` (`received` default, `sent`, `all`), `status`, `page`, `size`, `sort` (default `createdAt,desc`).
+Response `200`: paginated wrapper of the invitation object above.
+Errors: `400`, `401`.
+
+### GET `/invitations/{invitationId}` 🔒
+Allowed for the sender (the event's creator) and the receiver.
+Response `200`: invitation object.
+Errors: `403` (neither sender nor receiver), `404`.
+
+### PATCH `/invitations/{invitationId}` 🔒
+Receiver only. Accept or refuse a `PENDING` invitation.
+
+Request:
+```json
+{
+  "invitationStatus": "ACCEPTED"
+}
+```
+`ACCEPTED` adds the receiver to `event_organizer` with role `ADMIN`, which also grants access to a private event. `REFUSED` only updates the invitation. `PENDING` is rejected.
+
+Response `200`: updated invitation object with the new `invitationStatus`.
+Errors: `400` (`PENDING` or unknown value), `403` (not the receiver), `404`, `409` (`INVITATION_NOT_PENDING`).
+
+### DELETE `/invitations/{invitationId}` 🔒
+Sender (the event's creator) only. Removes the invitation.
+Response `204`. Errors: `403` (not the sender), `404`.
+
+---
+
+## 8. Endpoint summary
 
 | Method | Path | Auth | Who |
 |---|---|---|---|
@@ -649,6 +716,11 @@ Response `200`:
 | DELETE | `/events/{eventId}` | 🔒 | creator |
 | GET / POST | `/events/{eventId}/organizers` | 🔒 | organizer / creator |
 | DELETE | `/events/{eventId}/organizers/{organizerId}` | 🔒 | creator |
+| POST | `/events/{eventId}/invitations` | 🔒 | creator |
+| GET | `/invitations` | 🔒 | user (own) |
+| GET | `/invitations/{invitationId}` | 🔒 | sender or receiver |
+| PATCH | `/invitations/{invitationId}` | 🔒 | receiver |
+| DELETE | `/invitations/{invitationId}` | 🔒 | sender |
 | GET | `/events/{eventId}/tiers` | optional | same as event |
 | POST | `/events/{eventId}/tiers` | 🔒 | organizer |
 | PATCH / DELETE | `/tiers/{tierId}` | 🔒 | organizer |
@@ -669,4 +741,4 @@ Response `200`:
 - **Event cancellation**: `cancel` leaves tickets `VALID` (they can be refunded individually); check-in rejects tickets of a `CANCELLED` event.
 - **`validUntil`**: nullable in the schema. A sensible default is the event's `endTime` at issue time.
 - **Postponed events**: if `startTime`/`endTime` change, existing tickets' `validUntil` should be updated too.
-- **Private events**: there is no invite mechanism in the schema, so access is by direct link (UUID) for ticket purchase unless you add an invite table.
+- **Private events**: access is by direct link (UUID) unless the caller is an organizer. `POST /events/{eventId}/invitations` lets the `CREATOR` recruit `ADMIN`s; accepting an invitation grants organizer access to the private event. A pending invitee is not yet an organizer, so `GET /events/{eventId}` still returns `403` until they accept.
