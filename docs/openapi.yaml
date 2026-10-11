@@ -37,6 +37,8 @@ tags:
     description: Event lifecycle and discovery.
   - name: Organizers
     description: Per-event organizer management.
+  - name: Invitations
+    description: Creator-sent invitations for a user to join an event as admin.
   - name: Tiers
     description: Ticket tiers (pricing and capacity).
   - name: Tickets
@@ -611,6 +613,211 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /events/{eventId}/invitations:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    post:
+      tags: [Invitations]
+      summary: Invite a user to become an event admin
+      description: |
+        `CREATOR` only. Invites a user to become an `ADMIN` of the event. Provide
+        either `username` or `email`. The creator cannot be invited and users who
+        already organize the event cannot be invited. The invitation stays
+        `PENDING` until the receiver accepts or refuses it; inviting alone grants
+        no access.
+      operationId: createInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationCreateRequest'
+      responses:
+        '201':
+          description: Invitation created with status `PENDING`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invitation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller is not the creator of the event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                notTheCreator:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 403
+                    error: NOT_THE_CREATOR
+                    message: Caller is not the creator of this event
+                    path: /api/events/5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b/invitations
+                    details: []
+        '404':
+          description: Event or invited user not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: |
+            The user already organizes the event, already has a pending
+            invitation, or is the creator.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                alreadyOrganizer:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: ALREADY_ORGANIZER
+                    message: User already organizes this event
+                    path: /api/events/5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b/invitations
+                    details: []
+                alreadyInvited:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: ALREADY_INVITED
+                    message: A pending invitation already exists for this user
+                    path: /api/events/5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b/invitations
+                    details: []
+                cannotInviteCreator:
+                  value:
+                    timestamp: '2026-10-05T10:00:00Z'
+                    status: 409
+                    error: CANNOT_INVITE_CREATOR
+                    message: The event creator cannot be invited
+                    path: /api/events/5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b/invitations
+                    details: []
+
+  /invitations:
+    get:
+      tags: [Invitations]
+      summary: List the caller's invitations
+      description: |
+        Invitations addressed to the caller (`direction=received`, the default),
+        sent by the caller (`direction=sent`), or both (`direction=all`).
+      operationId: listInvitations
+      parameters:
+        - name: direction
+          in: query
+          description: Which side of the invitation to list.
+          schema:
+            type: string
+            enum: [received, sent, all]
+            default: received
+        - name: status
+          in: query
+          description: Filter by invitation status.
+          schema:
+            $ref: '#/components/schemas/InvitationStatus'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+        - name: sort
+          in: query
+          description: Sort expression, e.g. `createdAt,desc`.
+          schema:
+            type: string
+            default: createdAt,desc
+      responses:
+        '200':
+          description: Paginated list of invitations.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageInvitation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /invitations/{invitationId}:
+    parameters:
+      - $ref: '#/components/parameters/InvitationIdParam'
+    get:
+      tags: [Invitations]
+      summary: Get an invitation
+      description: Allowed for the sender (the event's creator) and the receiver.
+      operationId: getInvitation
+      responses:
+        '200':
+          description: Invitation object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invitation'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Invitations]
+      summary: Accept or refuse an invitation
+      description: |
+        Receiver only. Accepting adds the receiver to `event_organizer` with role
+        `ADMIN` (granting access to a private event); refusing only updates the
+        invitation. Only a `PENDING` invitation can be decided.
+      operationId: respondToInvitation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InvitationUpdateRequest'
+      responses:
+        '200':
+          description: Updated invitation object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invitation'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller is not the receiver of this invitation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`INVITATION_NOT_PENDING`: the invitation is already accepted or refused.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [Invitations]
+      summary: Delete an invitation
+      description: Sender (the event's creator) only. Removes the invitation.
+      operationId: deleteInvitation
+      responses:
+        '204':
+          description: Invitation deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Caller is not the sender of this invitation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /events/{eventId}/tiers:
     parameters:
       - $ref: '#/components/parameters/EventIdParam'
@@ -1127,6 +1334,14 @@ components:
       schema:
         type: string
         format: uuid
+    InvitationIdParam:
+      name: invitationId
+      in: path
+      required: true
+      description: Invitation UUID.
+      schema:
+        type: string
+        format: uuid
 
   responses:
     BadRequest:
@@ -1270,6 +1485,17 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/AttendeeTicket'
+
+    PageInvitation:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [content]
+          properties:
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/Invitation'
 
     # ------------------------------------------------------------------- auth
     RegisterRequest:
@@ -1645,6 +1871,69 @@ components:
       oneOf:
         - required: [username]
         - required: [email]
+
+    # ----------------------------------------------------------- invitations
+    InvitationStatus:
+      type: string
+      enum: [PENDING, ACCEPTED, REFUSED]
+
+    InvitationDecision:
+      type: string
+      description: Decision the receiver can apply to a `PENDING` invitation.
+      enum: [ACCEPTED, REFUSED]
+
+    UserRef:
+      type: object
+      required: [id, fullName, username]
+      properties:
+        id:
+          type: string
+          format: uuid
+        fullName:
+          type: string
+        username:
+          type: string
+
+    Invitation:
+      type: object
+      required: [id, event, sender, receiver, invitationStatus, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        event:
+          $ref: '#/components/schemas/TicketEventRef'
+        sender:
+          description: The event creator who sent the invitation.
+          $ref: '#/components/schemas/UserRef'
+        receiver:
+          description: The invited user.
+          $ref: '#/components/schemas/UserRef'
+        invitationStatus:
+          $ref: '#/components/schemas/InvitationStatus'
+        createdAt:
+          type: string
+          format: date-time
+
+    InvitationCreateRequest:
+      type: object
+      description: Provide either `username` or `email`.
+      properties:
+        username:
+          type: string
+        email:
+          type: string
+          format: email
+      oneOf:
+        - required: [username]
+        - required: [email]
+
+    InvitationUpdateRequest:
+      type: object
+      required: [invitationStatus]
+      properties:
+        invitationStatus:
+          $ref: '#/components/schemas/InvitationDecision'
 
     # ------------------------------------------------------------------ tiers
     TierSummary:
