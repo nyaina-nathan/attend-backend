@@ -2,11 +2,14 @@ package mg.improve.attend.service;
 
 import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.ChangePasswordRequest;
 import mg.improve.attend.domain.dto.request.UserUpdateRequest;
+import mg.improve.attend.domain.dto.response.PageUserResponse;
 import mg.improve.attend.domain.dto.response.UserMeResponse;
+import mg.improve.attend.domain.dto.response.UserResponse;
 import mg.improve.attend.domain.entity.Users;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.mapper.UsersMapper;
@@ -22,6 +25,10 @@ import mg.improve.attend.repository.JUsersRepository;
 import mg.improve.attend.repository.entities.JUsers;
 import mg.improve.attend.security.ClientInfoResolver;
 import mg.improve.attend.validator.UserValidator;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
+import org.springframework.data.domain.Sort;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -78,6 +85,38 @@ public class UserService {
     @Transactional(readOnly = true)
     public UserMeResponse getCurrentUser(UUID userId) {
         return UserMeResponse.from(load(userId));
+    }
+
+    /**
+     * Searches users by a case-insensitive partial {@code username} and/or {@code email}. At
+     * least one must be provided; when both are, users matching either are returned. Paginated,
+     * defaulting to {@code username,asc}.
+     */
+    @Transactional(readOnly = true)
+    public PageUserResponse searchUsers(String username, String email, int page, int size, String sort) {
+        Sort resolvedSort = validator.validateSearchQuery(username, email, page, size, sort);
+        Pageable pageable = PageRequest.of(page, size, resolvedSort);
+
+        Page<JUsers> result = users.search(likePattern(username), likePattern(email), pageable);
+
+        List<UserResponse> content = result.getContent().stream()
+                .map(usersMapper::toDomain)
+                .map(UserResponse::from)
+                .toList();
+
+        return new PageUserResponse(
+                result.getNumber(),
+                result.getSize(),
+                result.getTotalElements(),
+                result.getTotalPages(),
+                content);
+    }
+
+    private static String likePattern(String value) {
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        return "%" + value.trim().toLowerCase(Locale.ROOT) + "%";
     }
 
     @Transactional
