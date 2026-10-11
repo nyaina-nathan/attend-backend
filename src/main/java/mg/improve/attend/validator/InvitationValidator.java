@@ -5,6 +5,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import mg.improve.attend.domain.dto.request.InvitationCreateRequest;
+import mg.improve.attend.domain.dto.request.InvitationUpdateRequest;
+import mg.improve.attend.domain.enums.InvitationStatus;
 import mg.improve.attend.exceptions.BadRequestException;
 import mg.improve.attend.exceptions.ErrorDetail;
 import org.springframework.data.domain.Sort;
@@ -36,6 +38,25 @@ public class InvitationValidator {
             details.add(new ErrorDetail("username", "provide either username or email"));
         } else if (hasUsername && hasEmail) {
             details.add(new ErrorDetail("username", "provide only one of username or email"));
+        }
+
+        if (!details.isEmpty()) {
+            throw new BadRequestException("VALIDATION_ERROR", "Validation failed", details);
+        }
+    }
+
+    /**
+     * Validates the body of {@code PATCH /invitations/{invitationId}}. The receiver may only
+     * accept or refuse, so {@code invitationStatus} must be present and must not be
+     * {@code PENDING}.
+     */
+    public void validateDecision(InvitationUpdateRequest request) {
+        List<ErrorDetail> details = new ArrayList<>();
+
+        if (request.invitationStatus() == null) {
+            details.add(new ErrorDetail("invitationStatus", "must not be null"));
+        } else if (request.invitationStatus() == InvitationStatus.PENDING) {
+            details.add(new ErrorDetail("invitationStatus", "must be ACCEPTED or REFUSED"));
         }
 
         if (!details.isEmpty()) {

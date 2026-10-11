@@ -5,6 +5,7 @@ import java.util.Locale;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import mg.improve.attend.domain.dto.request.InvitationCreateRequest;
+import mg.improve.attend.domain.dto.request.InvitationUpdateRequest;
 import mg.improve.attend.domain.dto.response.InvitationResponse;
 import mg.improve.attend.domain.dto.response.PageInvitation;
 import mg.improve.attend.domain.entity.Invitation;
@@ -19,6 +20,7 @@ import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
 import mg.improve.attend.repository.JInvitationRepository;
 import mg.improve.attend.repository.JUsersRepository;
+import mg.improve.attend.repository.entities.JEventOrganizer;
 import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.repository.entities.JInvitation;
 import mg.improve.attend.repository.entities.JUsers;
@@ -81,6 +83,47 @@ public class InvitationService {
         JInvitation saved = invitations.saveAndFlush(invitation);
         Invitation domain = invitationMapper.toDomain(saved);
         return InvitationResponse.from(domain);
+    }
+
+    /**
+     * Accepts or refuses a {@code PENDING} invitation. Receiver only. Accepting additionally
+     * registers the receiver as an {@code ADMIN} organizer of the event; an already existing
+     * organizer row is left untouched.
+     */
+    @Transactional
+    public InvitationResponse respondToInvitation(UUID invitationId, UUID userId, InvitationUpdateRequest request) {
+        JInvitation invitation = invitations.findDetailById(invitationId)
+                .orElseThrow(() -> new NotFoundException("INVITATION_NOT_FOUND", "Invitation not found"));
+        if (!invitation.getReceiver().getId().equals(userId)) {
+            throw new ForbiddenException("NOT_THE_RECEIVER", "Caller is not the receiver of this invitation");
+        }
+        validator.validateDecision(request);
+        if (invitation.getInvitationStatus() != InvitationStatus.PENDING) {
+            throw new ConflictException("INVITATION_NOT_PENDING", "Invitation is already accepted or refused");
+        }
+
+        invitation.setInvitationStatus(request.invitationStatus());
+        if (request.invitationStatus() == InvitationStatus.ACCEPTED) {
+            grantAdmin(invitation);
+        }
+
+        JInvitation saved = invitations.saveAndFlush(invitation);
+        return InvitationResponse.from(invitationMapper.toDomain(saved));
+    }
+
+    /** Registers the receiver as an {@code ADMIN} organizer unless a row already exists. */
+    private void grantAdmin(JInvitation invitation) {
+        UUID eventId = invitation.getEvent().getId();
+        UUID receiverId = invitation.getReceiver().getId();
+        if (organizers.existsByEvent_IdAndUser_Id(eventId, receiverId)) {
+            return;
+        }
+
+        JEventOrganizer organizer = new JEventOrganizer();
+        organizer.setUser(invitation.getReceiver());
+        organizer.setEvent(invitation.getEvent());
+        organizer.setEventRole(EventRole.ADMIN);
+        organizers.save(organizer);
     }
 
     /**
