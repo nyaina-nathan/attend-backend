@@ -11,11 +11,13 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.Table;
+import java.time.Instant;
 import java.util.UUID;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import mg.improve.attend.domain.enums.InvitationStatus;
+import org.hibernate.annotations.CreationTimestamp;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.type.SqlTypes;
 
@@ -47,4 +49,8 @@ public class JInvitation {
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(name = "invitation_status", columnDefinition = "invitation_status")
     private InvitationStatus invitationStatus = InvitationStatus.PENDING;
+
+    @CreationTimestamp
+    @Column(name = "created_at", nullable = false, updatable = false)
+    private Instant createdAt;
 }

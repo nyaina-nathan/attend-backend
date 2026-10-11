@@ -1,5 +1,6 @@
 package mg.improve.attend.domain.entity;
 
+import java.time.Instant;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
@@ -22,4 +23,6 @@ public class Invitation {
 
     @Builder.Default
     private InvitationStatus invitationStatus = InvitationStatus.PENDING;
+
+    private Instant createdAt;
 }

@@ -26,6 +26,7 @@ public class InvitationMapper {
         domain.setReceiver(usersMapper.toDomain(entity.getReceiver()));
         domain.setEvent(eventsMapper.toDomain(entity.getEvent()));
         domain.setInvitationStatus(entity.getInvitationStatus());
+        domain.setCreatedAt(entity.getCreatedAt());
         return domain;
     }
 
@@ -40,6 +41,7 @@ public class InvitationMapper {
         entity.setEvent(eventsMapper.toEntity(domain.getEvent()));
         entity.setInvitationStatus(
                 domain.getInvitationStatus() != null ? domain.getInvitationStatus() : InvitationStatus.PENDING);
+        entity.setCreatedAt(domain.getCreatedAt());
         return entity;
     }
 }
