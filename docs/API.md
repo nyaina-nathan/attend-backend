@@ -632,7 +632,7 @@ Response `200`:
 
 ## 7. Invitations
 
-`invitationStatus`: `PENDING` | `ACCEPTED` | `REFUSED`
+`invitationStatus`: `PENDING` | `ACCEPTED` | `DECLINED`
 
 Invitations are how a `CREATOR` recruits `ADMIN`s for an event. The creator invites a user; the invited user accepts (becoming an `ADMIN` in `event_organizer`) or refuses. Only a user who does not already organize the event can be invited, and the creator cannot be invited. Inviting does not by itself grant any access: the receiver becomes an organizer only once they accept.
 
@@ -686,7 +686,7 @@ Request:
   "invitationStatus": "ACCEPTED"
 }
 ```
-`ACCEPTED` adds the receiver to `event_organizer` with role `ADMIN`, which also grants access to a private event. `REFUSED` only updates the invitation. `PENDING` is rejected.
+`ACCEPTED` adds the receiver to `event_organizer` with role `ADMIN`, which also grants access to a private event. `DECLINED` only updates the invitation. `PENDING` is rejected.
 
 Response `200`: updated invitation object with the new `invitationStatus`.
 Errors: `400` (`PENDING` or unknown value), `403` (not the receiver), `404`, `409` (`INVITATION_NOT_PENDING`).
