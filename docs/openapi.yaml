@@ -201,6 +201,48 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /users:
+    get:
+      tags: [Users]
+      summary: Search users
+      description: |
+        Case-insensitive partial search by `username` and/or `email`. At least one of
+        the two query parameters is required; when both are given, users matching
+        either are returned. Paginated.
+      operationId: searchUsers
+      parameters:
+        - name: username
+          in: query
+          required: false
+          description: Partial, case-insensitive match on the username.
+          schema:
+            type: string
+        - name: email
+          in: query
+          required: false
+          description: Partial, case-insensitive match on the email.
+          schema:
+            type: string
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+        - name: sort
+          in: query
+          description: 'Sort expression, e.g. `username,asc`. Sortable: `username`, `fullName`, `createdAt`.'
+          schema:
+            type: string
+            default: username,asc
+      responses:
+        '200':
+          description: A page of matching users.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageUserResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
   /users/me:
     get:
       tags: [Users]
@@ -1496,6 +1538,17 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/Invitation'
+
+    PageUserResponse:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [content]
+          properties:
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/UserResponse'
 
     # ------------------------------------------------------------------- auth
     RegisterRequest:

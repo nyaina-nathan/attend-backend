@@ -81,6 +81,7 @@ changing an endpoint.
 |---|---|---|
 | POST | `/auth/register`, `/auth/login`, `/auth/refresh` | public |
 | POST | `/auth/logout` | 🔒 |
+| GET | `/users?username=&email=` | 🔒 |
 | GET / PATCH / DELETE | `/users/me` | 🔒 |
 | GET | `/users/me/dashboard` | 🔒 |
 | POST | `/users/me/password` | 🔒 |
@@ -101,6 +102,9 @@ changing an endpoint.
 | POST | `/tickets/{ticketId}/check-in`, `/refund` | organizer |
 | POST | `/tickets/{ticketId}/cancel` | owner |
 | GET | `/events/{eventId}/tickets`, `/events/{eventId}/stats` | organizer |
+
+User search (`GET /users`) is a case-insensitive partial match on `username` and/or `email`;
+at least one is required, and when both are given users matching either are returned.
 
 Invitations are consent-based: the creator invites a user to become an `ADMIN`; the receiver
 accepts (which grants organizer access) or declines. Only a `PENDING` invitation can be
