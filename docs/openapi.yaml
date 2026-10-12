@@ -7,8 +7,10 @@ info:
     ## Conventions
     - **IDs** are UUID strings.
     - **Timestamps** are ISO-8601 UTC, e.g. `2026-11-20T18:00:00Z`.
-    - **Money** is a string-safe number with 2 decimals (`"price": 25.00`). A single
-      currency is assumed; it is not part of the schema.
+    - **Money** is a string-safe number with 2 decimals (`"price": 25.00`). Each event
+      carries a `priceUnit` (free-form currency/unit code, default `USD`) that labels every
+      amount on that event. It is not converted when changed, only relabelled. The dashboard's
+      aggregate `revenue` spans events with possibly different units, so it is unit-less.
     - **Auth** uses a JWT access token plus a refresh token, both delivered as
       `HttpOnly` cookies (`access_token`, `refresh_token`). Operations marked
       authenticated require the access cookie.
@@ -1719,6 +1721,10 @@ components:
           oneOf:
             - type: string
             - type: 'null'
+        priceUnit:
+          type: string
+          maxLength: 10
+          description: Currency/unit code of this event.
         status:
           $ref: '#/components/schemas/EventStatus'
         myRole:
@@ -1822,6 +1828,13 @@ components:
           default: true
         location:
           type: string
+        priceUnit:
+          type: string
+          maxLength: 10
+          default: USD
+          description: |
+            Free-form currency/unit code for the event's amounts. Omitted values default to
+            `USD`. Unknown units are accepted.
 
     EventUpdateRequest:
       type: object
@@ -1841,6 +1854,12 @@ components:
           type: boolean
         location:
           type: string
+        priceUnit:
+          type: string
+          maxLength: 10
+          description: |
+            New free-form currency/unit code. Relabels the event's amounts without converting
+            them.
         status:
           $ref: '#/components/schemas/EventStatus'
 
@@ -1863,6 +1882,10 @@ components:
           oneOf:
             - type: string
             - type: 'null'
+        priceUnit:
+          type: string
+          maxLength: 10
+          description: Currency/unit code applying to `minPrice`.
         status:
           $ref: '#/components/schemas/EventStatus'
         minPrice:
@@ -1896,6 +1919,10 @@ components:
           oneOf:
             - type: string
             - type: 'null'
+        priceUnit:
+          type: string
+          maxLength: 10
+          description: Currency/unit code applying to the event's tier prices.
         status:
           $ref: '#/components/schemas/EventStatus'
         myRole:
@@ -2043,6 +2070,10 @@ components:
             eventId:
               type: string
               format: uuid
+            priceUnit:
+              type: string
+              maxLength: 10
+              description: Currency/unit code applying to `price`.
 
     TierCreateRequest:
       type: object
@@ -2105,6 +2136,10 @@ components:
           oneOf:
             - type: string
             - type: 'null'
+        priceUnit:
+          type: string
+          maxLength: 10
+          description: Currency/unit code applying to the ticket's `pricePaid`.
 
     TicketTierRef:
       type: object
@@ -2243,6 +2278,10 @@ components:
         eventId:
           type: string
           format: uuid
+        priceUnit:
+          type: string
+          maxLength: 10
+          description: Currency/unit code applying to `revenue` and the tier revenues.
         totalCapacity:
           type: integer
           minimum: 0
