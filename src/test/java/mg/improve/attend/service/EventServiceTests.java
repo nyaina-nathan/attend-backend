@@ -104,7 +104,7 @@ class EventServiceTests {
     void createEvent_persistsEventAndCreatorOrganizer() {
         UUID userId = UUID.randomUUID();
         UUID eventId = UUID.randomUUID();
-        EventCreateRequest request = new EventCreateRequest("Jazz Night", "An evening", START, END, null, "Venue", null);
+        EventCreateRequest request = new EventCreateRequest("Jazz Night", "An evening", START, END, null, "Venue", null, null, null);
         JUsers creator = userEntity(userId);
         JEvents saved = eventEntity(eventId, true);
         Events domain = eventDomain(eventId, true);
@@ -140,7 +140,7 @@ class EventServiceTests {
     void createEvent_honorsExplicitIsPublicFalse() {
         UUID userId = UUID.randomUUID();
         UUID eventId = UUID.randomUUID();
-        EventCreateRequest request = new EventCreateRequest("Private", null, START, END, false, null, null);
+        EventCreateRequest request = new EventCreateRequest("Private", null, START, END, false, null, null, null, null);
         JUsers creator = userEntity(userId);
         JEvents saved = eventEntity(eventId, false);
 
@@ -156,9 +156,32 @@ class EventServiceTests {
     }
 
     @Test
+    void createEvent_persistsCoordinates() {
+        UUID userId = UUID.randomUUID();
+        UUID eventId = UUID.randomUUID();
+        BigDecimal latitude = new BigDecimal("-18.879200");
+        BigDecimal longitude = new BigDecimal("47.507900");
+        EventCreateRequest request = new EventCreateRequest("Jazz", null, START, END, null, "Venue",
+                latitude, longitude, null);
+        JUsers creator = userEntity(userId);
+        JEvents saved = eventEntity(eventId, true);
+
+        when(users.findById(userId)).thenReturn(Optional.of(creator));
+        when(events.saveAndFlush(any(JEvents.class))).thenReturn(saved);
+        when(eventsMapper.toDomain(saved)).thenReturn(eventDomain(eventId, true));
+
+        eventService.createEvent(userId, request);
+
+        ArgumentCaptor<JEvents> eventCaptor = ArgumentCaptor.forClass(JEvents.class);
+        verify(events).saveAndFlush(eventCaptor.capture());
+        assertThat(eventCaptor.getValue().getLatitude()).isEqualByComparingTo(latitude);
+        assertThat(eventCaptor.getValue().getLongitude()).isEqualByComparingTo(longitude);
+    }
+
+    @Test
     void createEvent_rejectsUnknownUser() {
         UUID userId = UUID.randomUUID();
-        EventCreateRequest request = new EventCreateRequest("Jazz", null, START, END, null, null, null);
+        EventCreateRequest request = new EventCreateRequest("Jazz", null, START, END, null, null, null, null, null);
         when(users.findById(userId)).thenReturn(Optional.empty());
 
         assertThatExceptionOfType(NotFoundException.class)
@@ -174,7 +197,7 @@ class EventServiceTests {
     @Test
     void createEvent_propagatesValidationFailure() {
         UUID userId = UUID.randomUUID();
-        EventCreateRequest request = new EventCreateRequest(null, null, null, null, null, null, null);
+        EventCreateRequest request = new EventCreateRequest(null, null, null, null, null, null, null, null, null);
         doThrow(new BadRequestException("VALIDATION_ERROR", "Validation failed"))
                 .when(validator).validate(any(EventCreateRequest.class));
 
@@ -385,7 +408,7 @@ class EventServiceTests {
         UUID userId = UUID.randomUUID();
         JEvents entity = eventEntity(eventId, true);
         EventUpdateRequest request = new EventUpdateRequest("Renamed", null, null, null, false, null,
-                null, EventStatus.POSTPONED);
+                null, null, null, EventStatus.POSTPONED);
 
         when(events.findById(eventId)).thenReturn(Optional.of(entity));
         when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, userId, EventRole.CREATOR))
@@ -396,7 +419,7 @@ class EventServiceTests {
 
         EventDetail response = eventService.updateEvent(eventId, userId, request);
 
-        verify(validator).validateUpdate(request, START, END);
+        verify(validator).validateUpdate(request, START, END, null, null);
         assertThat(entity.getTitle()).isEqualTo("Renamed");
         assertThat(entity.getDescription()).isEqualTo("Description");
         assertThat(entity.getStartTime()).isEqualTo(START);
@@ -404,6 +427,29 @@ class EventServiceTests {
         assertThat(entity.isPublic()).isFalse();
         assertThat(entity.getStatus()).isEqualTo(EventStatus.POSTPONED);
         assertThat(response.myRole()).isEqualTo(EventRole.CREATOR);
+    }
+
+    @Test
+    void updateEvent_appliesCoordinates() {
+        UUID eventId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        BigDecimal latitude = new BigDecimal("-18.879200");
+        BigDecimal longitude = new BigDecimal("47.507900");
+        EventUpdateRequest request = new EventUpdateRequest(null, null, null, null, null, null,
+                latitude, longitude, null, null);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, userId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(events.saveAndFlush(entity)).thenReturn(entity);
+        when(tiers.findByEvent_Id(eventId)).thenReturn(List.of());
+        when(eventsMapper.toDomain(entity)).thenReturn(eventDomain(eventId, false));
+
+        eventService.updateEvent(eventId, userId, request);
+
+        assertThat(entity.getLatitude()).isEqualByComparingTo(latitude);
+        assertThat(entity.getLongitude()).isEqualByComparingTo(longitude);
     }
 
     @Test
@@ -418,7 +464,7 @@ class EventServiceTests {
 
         assertThatExceptionOfType(ForbiddenException.class)
                 .isThrownBy(() -> eventService.updateEvent(eventId, userId,
-                        new EventUpdateRequest("x", null, null, null, null, null, null, null)))
+                        new EventUpdateRequest("x", null, null, null, null, null, null, null, null, null)))
                 .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_THE_CREATOR"));
 
         verify(events, never()).saveAndFlush(any());
@@ -433,7 +479,7 @@ class EventServiceTests {
 
         assertThatExceptionOfType(NotFoundException.class)
                 .isThrownBy(() -> eventService.updateEvent(eventId, userId,
-                        new EventUpdateRequest("x", null, null, null, null, null, null, null)))
+                        new EventUpdateRequest("x", null, null, null, null, null, null, null, null, null)))
                 .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("EVENT_NOT_FOUND"));
 
         verifyNoInteractions(validator);
@@ -444,13 +490,13 @@ class EventServiceTests {
         UUID eventId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         JEvents entity = eventEntity(eventId, true);
-        EventUpdateRequest request = new EventUpdateRequest(null, null, END, START, null, null, null, null);
+        EventUpdateRequest request = new EventUpdateRequest(null, null, END, START, null, null, null, null, null, null);
 
         when(events.findById(eventId)).thenReturn(Optional.of(entity));
         when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, userId, EventRole.CREATOR))
                 .thenReturn(true);
         doThrow(new BadRequestException("VALIDATION_ERROR", "Validation failed"))
-                .when(validator).validateUpdate(any(), any(), any());
+                .when(validator).validateUpdate(any(), any(), any(), any(), any());
 
         assertThatExceptionOfType(BadRequestException.class)
                 .isThrownBy(() -> eventService.updateEvent(eventId, userId, request));
