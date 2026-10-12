@@ -91,6 +91,10 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
             @Param("status") TicketStatus status,
             Pageable pageable);
 
+    List<JTicket> findByOrder_Id(UUID orderId);
+
+    List<JTicket> findByOrder_IdIn(Collection<UUID> orderIds);
+
     boolean existsByTier_Event_Id(UUID eventId);
 
     boolean existsByTier_Id(UUID tierId);

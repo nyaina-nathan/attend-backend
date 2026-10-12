@@ -26,6 +26,7 @@ public class TicketMapper {
         domain.setTier(ticketTierMapper.toDomain(entity.getTier()));
         domain.setPricePaid(entity.getPricePaid());
         domain.setTicketStatus(entity.getTicketStatus());
+        domain.setOrderId(entity.getOrder() == null ? null : entity.getOrder().getId());
         domain.setCheckedInAt(entity.getCheckedInAt());
         domain.setCreatedAt(entity.getCreatedAt());
         domain.setValidUntil(entity.getValidUntil());
@@ -43,6 +44,8 @@ public class TicketMapper {
         entity.setTier(ticketTierMapper.toEntity(domain.getTier()));
         entity.setPricePaid(domain.getPricePaid());
         entity.setTicketStatus(domain.getTicketStatus());
+        // The order association is set by the service that issues the ticket; a bare order id
+        // cannot be resolved back to a JTicketOrder here.
         entity.setCheckedInAt(domain.getCheckedInAt());
         entity.setCreatedAt(domain.getCreatedAt());
         entity.setValidUntil(domain.getValidUntil());
