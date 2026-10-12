@@ -89,6 +89,8 @@ Endpoints that don't carry the event id in the path must resolve it before the c
 | `POST /tickets/{ticketId}/check-in` | ticket → tier → `id_event` | organizer |
 | `POST /tickets/{ticketId}/refund` | ticket → tier → `id_event` | organizer |
 | `GET /tickets/{ticketId}` | owner **or** organizer of ticket → tier → `id_event` | owner / organizer |
+| `GET /payment-methods/{paymentMethodId}` | payment method → `id_event` | reader (active only) / creator |
+| `PATCH/DELETE /payment-methods/{paymentMethodId}` | payment method → `id_event` | creator |
 
 Check-in is the critical one: a scanner who is an organizer of event A must never be able to scan a ticket belonging to event B. Always compare against the event resolved from the **ticket**, never an event id supplied by the client.
 
@@ -96,6 +98,7 @@ Check-in is the critical one: a scanner who is an organizer of event A must neve
 - Private event and caller is anonymous: `401`.
 - Private event and caller is authenticated but not an organizer: `403 NOT_AN_ORGANIZER`.
 - Unknown resource id: `404`.
+- Inactive payment method and caller is not the creator: `404` (existence hidden).
 
 ---
 
@@ -765,7 +768,81 @@ Response `204`. Errors: `403` (not the sender), `404`.
 
 ---
 
-## 8. Endpoint summary
+## 8. Payment methods
+
+`paymentType`: `BANK_TRANSFER` | `MOBILE_MONEY` | `CARD` | `CRYPTO` | `CASH` | `OTHER`
+
+Payment methods describe how an event's creator gets paid. They are **per event**, so a
+single event may accept several (e.g. mobile money for one buyer and a card for another).
+`routingDetails` (SWIFT/IBAN/routing number) and `instructions` (free text shown to the
+buyer) are optional. Methods are not auto-deleted; soft-disable one with `isActive: false`.
+
+### GET `/events/{eventId}/payment-methods`
+Same visibility rules as the event. Non-creators see only **active** methods; the event's
+creator also sees inactive ones.
+
+Response `200`:
+```json
+[
+  {
+    "id": "d4f5a6b7-0000-4000-8000-000000000001",
+    "eventId": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
+    "paymentType": "MOBILE_MONEY",
+    "providerName": "M-Pesa",
+    "accountName": "Jane Doe",
+    "accountIdentifier": "+261340000000",
+    "routingDetails": null,
+    "instructions": "Send the amount, then share the reference.",
+    "isActive": true,
+    "createdAt": "2026-10-12T09:00:00Z",
+    "updatedAt": "2026-10-12T09:00:00Z"
+  }
+]
+```
+
+### POST `/events/{eventId}/payment-methods` 🔒
+`CREATOR` only.
+
+Request:
+```json
+{
+  "paymentType": "MOBILE_MONEY",
+  "providerName": "M-Pesa",
+  "accountName": "Jane Doe",
+  "accountIdentifier": "+261340000000",
+  "routingDetails": null,
+  "instructions": "Send the amount, then share the reference.",
+  "isActive": true
+}
+```
+Response `201`: payment method object. Errors: `400` (`paymentType` must be one of the enum
+values; `providerName` ≤ 100, `accountName` ≤ 150, `accountIdentifier` ≤ 100,
+`routingDetails` ≤ 100; provider/account/identifier required), `403 NOT_THE_CREATOR`,
+`404` (event not found).
+
+### GET `/payment-methods/{paymentMethodId}`
+Resolves the event from the method. Same visibility rules as the event; non-creators only
+see active methods (an inactive method is `404` to them). Response `200`: payment method object.
+
+### PATCH `/payment-methods/{paymentMethodId}` 🔒
+`CREATOR` only. Partial update; the owning event cannot be changed.
+
+Request:
+```json
+{
+  "providerName": "M-Pesa Paybill",
+  "isActive": false
+}
+```
+Response `200`: payment method object. Errors: `400`, `403 NOT_THE_CREATOR`, `404`.
+
+### DELETE `/payment-methods/{paymentMethodId}` 🔒
+`CREATOR` only.
+Response `204`. Errors: `403`, `404`.
+
+---
+
+## 9. Endpoint summary
 
 | Method | Path | Auth | Who |
 |---|---|---|---|
@@ -793,6 +870,11 @@ Response `204`. Errors: `403` (not the sender), `404`.
 | GET | `/events/{eventId}/tiers` | optional | same as event |
 | POST | `/events/{eventId}/tiers` | 🔒 | organizer |
 | PATCH / DELETE | `/tiers/{tierId}` | 🔒 | organizer |
+| GET | `/events/{eventId}/payment-methods` | optional | same as event; active only (creator sees all) |
+| POST | `/events/{eventId}/payment-methods` | 🔒 | creator |
+| GET | `/payment-methods/{paymentMethodId}` | optional | same as event; active only (creator sees all) |
+| PATCH | `/payment-methods/{paymentMethodId}` | 🔒 | creator |
+| DELETE | `/payment-methods/{paymentMethodId}` | 🔒 | creator |
 | POST | `/tiers/{tierId}/tickets` | 🔒 | user |
 | GET | `/tiers/{tierId}/check` | 🔒 | user |
 | GET | `/tickets/me` | 🔒 | user |
@@ -814,7 +896,7 @@ Response `204`. Errors: `403` (not the sender), `404`.
 - **Coordinates**: an event's `latitude`/`longitude` are an optional pair. They must be set
   together, latitude within `[-90, 90]` and longitude within `[-180, 180]`, enforced by both the
   validator and `CHECK` constraints on `events`.
-- **Payments**: the schema has `price_paid` but no payment table. For paid tiers, `POST /tiers/{tierId}/tickets` currently issues the ticket directly. If you add real payments, this endpoint should become a checkout flow (create a pending order, then confirm via webhook).
+- **Payments**: `event_payment_methods` lets an event's creator declare how the event accepts money, but no payment processor is wired in and `price_paid` is still captured directly. For paid tiers, `POST /tiers/{tierId}/tickets` currently issues the ticket directly. If you add real payments, this endpoint should become a checkout flow (create a pending order, then confirm via webhook).
 - **Event cancellation**: `cancel` leaves tickets `VALID` (they can be refunded individually); check-in rejects tickets of a `CANCELLED` event.
 - **`validUntil`**: nullable in the schema. A sensible default is the event's `endTime` at issue time.
 - **Postponed events**: if `startTime`/`endTime` change, existing tickets' `validUntil` should be updated too.

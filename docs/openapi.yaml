@@ -45,6 +45,8 @@ tags:
     description: Creator-sent invitations for a user to join an event as admin.
   - name: Tiers
     description: Ticket tiers (pricing and capacity).
+  - name: Payment methods
+    description: Per-event payment methods describing how an event accepts money.
   - name: Tickets
     description: Ticket issuance, check-in, cancellation and refunds.
   - name: Stats
@@ -981,6 +983,124 @@ paths:
               schema:
                 $ref: '#/components/schemas/Error'
 
+  /events/{eventId}/payment-methods:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    get:
+      tags: [Payment methods]
+      summary: List payment methods for an event
+      description: |
+        Same visibility rules as `GET /events/{eventId}`: a private event's payment
+        methods are visible only to its organizers. Non-creators only see active
+        methods; the event's creator also sees inactive ones.
+      operationId: listPaymentMethods
+      security:
+        - {}
+        - access_token: []
+      responses:
+        '200':
+          description: Payment methods of the event.
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/PaymentMethod'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Payment methods]
+      summary: Create a payment method
+      description: Creator only.
+      operationId: createPaymentMethod
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMethodCreateRequest'
+      responses:
+        '201':
+          description: Payment method created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethod'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /payment-methods/{paymentMethodId}:
+    parameters:
+      - $ref: '#/components/parameters/PaymentMethodIdParam'
+    get:
+      tags: [Payment methods]
+      summary: Get a payment method
+      description: |
+        The event id is resolved from the payment method. Same visibility rules as
+        `GET /events/{eventId}`; non-creators may fetch only active methods, and an
+        inactive method is `404` to them. The creator may fetch any method.
+      operationId: getPaymentMethod
+      security:
+        - {}
+        - access_token: []
+      responses:
+        '200':
+          description: Payment method object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethod'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    patch:
+      tags: [Payment methods]
+      summary: Update a payment method
+      description: |
+        Creator only. The event id is resolved from the payment method. Partial update;
+        the owning event cannot be changed.
+      operationId: updatePaymentMethod
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PaymentMethodUpdateRequest'
+      responses:
+        '200':
+          description: Updated payment method object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaymentMethod'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      tags: [Payment methods]
+      summary: Delete a payment method
+      description: Creator only. The event id is resolved from the payment method.
+      operationId: deletePaymentMethod
+      responses:
+        '204':
+          description: Payment method deleted.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /tiers/{tierId}/tickets:
     post:
       tags: [Tickets]
@@ -1408,6 +1528,14 @@ components:
       in: path
       required: true
       description: Invitation UUID.
+      schema:
+        type: string
+        format: uuid
+    PaymentMethodIdParam:
+      name: paymentMethodId
+      in: path
+      required: true
+      description: Payment method UUID.
       schema:
         type: string
         format: uuid
@@ -2160,6 +2288,105 @@ components:
         capacity:
           type: integer
           minimum: 0
+
+    # --------------------------------------------------------- payment methods
+    PaymentType:
+      type: string
+      enum: [BANK_TRANSFER, MOBILE_MONEY, CARD, CRYPTO, CASH, OTHER]
+
+    PaymentMethod:
+      type: object
+      required: [id, eventId, paymentType, providerName, accountName, accountIdentifier, isActive, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        paymentType:
+          $ref: '#/components/schemas/PaymentType'
+        providerName:
+          type: string
+          maxLength: 100
+        accountName:
+          type: string
+          maxLength: 150
+        accountIdentifier:
+          type: string
+          maxLength: 100
+        routingDetails:
+          oneOf:
+            - type: string
+            - type: 'null'
+          maxLength: 100
+        instructions:
+          oneOf:
+            - type: string
+            - type: 'null'
+        isActive:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    PaymentMethodCreateRequest:
+      type: object
+      required: [paymentType, providerName, accountName, accountIdentifier]
+      properties:
+        paymentType:
+          $ref: '#/components/schemas/PaymentType'
+        providerName:
+          type: string
+          maxLength: 100
+        accountName:
+          type: string
+          maxLength: 150
+        accountIdentifier:
+          type: string
+          maxLength: 100
+        routingDetails:
+          oneOf:
+            - type: string
+            - type: 'null'
+          maxLength: 100
+        instructions:
+          oneOf:
+            - type: string
+            - type: 'null'
+        isActive:
+          type: boolean
+          default: true
+
+    PaymentMethodUpdateRequest:
+      type: object
+      description: Partial update.
+      properties:
+        paymentType:
+          $ref: '#/components/schemas/PaymentType'
+        providerName:
+          type: string
+          maxLength: 100
+        accountName:
+          type: string
+          maxLength: 150
+        accountIdentifier:
+          type: string
+          maxLength: 100
+        routingDetails:
+          oneOf:
+            - type: string
+            - type: 'null'
+          maxLength: 100
+        instructions:
+          oneOf:
+            - type: string
+            - type: 'null'
+        isActive:
+          type: boolean
 
     # ---------------------------------------------------------------- tickets
     TicketStatus:
