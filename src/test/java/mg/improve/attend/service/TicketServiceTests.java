@@ -21,6 +21,7 @@ import mg.improve.attend.domain.dto.response.PageAttendeeTicket;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
+import mg.improve.attend.domain.dto.response.TierTicketPresence;
 import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.entity.Ticket;
 import mg.improve.attend.domain.entity.TicketTier;
@@ -223,6 +224,54 @@ class TicketServiceTests {
                 .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("USER_NOT_FOUND"));
 
         verify(tickets, never()).saveAndFlush(any());
+    }
+
+    // ------------------------------------------------------------------
+    // checkTierTicketPresence
+    // ------------------------------------------------------------------
+
+    @Test
+    void checkTierTicketPresence_returnsTrueWhenCallerHoldsCapacityTicket() {
+        UUID tierId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+
+        when(tiers.existsById(tierId)).thenReturn(true);
+        when(tickets.existsByTier_IdAndOwner_IdAndTicketStatusIn(tierId, userId, CAPACITY_STATUSES))
+                .thenReturn(true);
+
+        TierTicketPresence response = ticketService.checkTierTicketPresence(tierId, userId);
+
+        assertThat(response.isPresent()).isTrue();
+    }
+
+    @Test
+    void checkTierTicketPresence_returnsFalseWhenCallerHasNoTicket() {
+        UUID tierId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+
+        when(tiers.existsById(tierId)).thenReturn(true);
+        when(tickets.existsByTier_IdAndOwner_IdAndTicketStatusIn(tierId, userId, CAPACITY_STATUSES))
+                .thenReturn(false);
+
+        TierTicketPresence response = ticketService.checkTierTicketPresence(tierId, userId);
+
+        assertThat(response.isPresent()).isFalse();
+    }
+
+    @Test
+    void checkTierTicketPresence_rejectsUnknownTier() {
+        UUID tierId = UUID.randomUUID();
+
+        when(tiers.existsById(tierId)).thenReturn(false);
+
+        assertThatExceptionOfType(NotFoundException.class)
+                .isThrownBy(() -> ticketService.checkTierTicketPresence(tierId, UUID.randomUUID()))
+                .satisfies(ex -> {
+                    assertThat(ex.getCode()).isEqualTo("TIER_NOT_FOUND");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.NOT_FOUND);
+                });
+
+        verifyNoInteractions(tickets);
     }
 
     // ------------------------------------------------------------------
