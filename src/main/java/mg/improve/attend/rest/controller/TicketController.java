@@ -8,6 +8,7 @@ import mg.improve.attend.domain.dto.response.PageAttendeeTicket;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
+import mg.improve.attend.domain.dto.response.TierTicketPresence;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.security.CustomUserDetails;
 import mg.improve.attend.service.TicketService;
@@ -38,6 +39,12 @@ public class TicketController {
             @AuthenticationPrincipal CustomUserDetails principal, @PathVariable UUID tierId) {
         TicketResponse issued = ticketService.issueTicket(tierId, principal.getId());
         return ResponseEntity.status(HttpStatus.CREATED).body(issued);
+    }
+
+    @GetMapping("/tiers/{tierId}/check")
+    public ResponseEntity<TierTicketPresence> checkTierPresence(
+            @AuthenticationPrincipal CustomUserDetails principal, @PathVariable UUID tierId) {
+        return ResponseEntity.ok(ticketService.checkTierTicketPresence(tierId, principal.getId()));
     }
 
     @GetMapping("/tickets/me")

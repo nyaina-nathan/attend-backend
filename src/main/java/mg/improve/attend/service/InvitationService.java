@@ -93,7 +93,7 @@ public class InvitationService {
     @Transactional
     public InvitationResponse respondToInvitation(UUID invitationId, UUID userId, InvitationUpdateRequest request) {
         JInvitation invitation = invitations.findDetailById(invitationId)
-                .orElseThrow(() -> new NotFoundException("INVITATION_NOT_FOUND", "Invitation not found"));
+        .orElseThrow(() -> new NotFoundException("INVITATION_NOT_FOUND", "Invitation not found"));
         if (!invitation.getReceiver().getId().equals(userId)) {
             throw new ForbiddenException("NOT_THE_RECEIVER", "Caller is not the receiver of this invitation");
         }
@@ -101,8 +101,9 @@ public class InvitationService {
         if (invitation.getInvitationStatus() != InvitationStatus.PENDING) {
             throw new ConflictException("INVITATION_NOT_PENDING", "Invitation is already accepted or refused");
         }
-
+        
         invitation.setInvitationStatus(request.invitationStatus());
+        System.out.println(invitation);
         if (request.invitationStatus() == InvitationStatus.ACCEPTED) {
             grantAdmin(invitation);
         }
