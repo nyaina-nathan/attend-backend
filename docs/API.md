@@ -349,11 +349,15 @@ Request:
   "endTime": "2026-11-20T22:00:00Z",
   "isPublic": true,
   "location": "Antananarivo, Alliance Française",
+  "latitude": -18.879200,
+  "longitude": 47.507900,
   "priceUnit": "USD"
 }
 ```
-`description`, `location` and `priceUnit` optional; `isPublic` defaults to `true`, `priceUnit`
-defaults to `USD`. `priceUnit` is a free-form currency/unit code, at most 10 characters.
+`description`, `location`, `latitude`, `longitude` and `priceUnit` optional; `isPublic` defaults to
+`true`, `priceUnit` defaults to `USD`. `priceUnit` is a free-form currency/unit code, at most 10
+characters. `latitude`/`longitude` are a coordinate pair: provide both or neither, latitude within
+`[-90, 90]` and longitude within `[-180, 180]`.
 
 Response `201`:
 ```json
@@ -365,6 +369,8 @@ Response `201`:
   "endTime": "2026-11-20T22:00:00Z",
   "isPublic": true,
   "location": "Antananarivo, Alliance Française",
+  "latitude": -18.879200,
+  "longitude": 47.507900,
   "priceUnit": "USD",
   "status": "OK",
   "myRole": "CREATOR",
@@ -391,6 +397,8 @@ Response `200`: paginated wrapper with items:
   "startTime": "2026-11-20T18:00:00Z",
   "endTime": "2026-11-20T22:00:00Z",
   "location": "Antananarivo, Alliance Française",
+  "latitude": -18.879200,
+  "longitude": 47.507900,
   "priceUnit": "USD",
   "status": "OK",
   "minPrice": 0.00
@@ -410,6 +418,8 @@ Response `200`:
   "endTime": "2026-11-20T22:00:00Z",
   "isPublic": true,
   "location": "Antananarivo, Alliance Française",
+  "latitude": -18.879200,
+  "longitude": 47.507900,
   "priceUnit": "USD",
   "status": "OK",
   "myRole": null,
@@ -441,6 +451,8 @@ Request:
   "endTime": "2026-11-21T22:00:00Z",
   "isPublic": false,
   "location": "New venue",
+  "latitude": -18.900000,
+  "longitude": 47.500000,
   "priceUnit": "EUR",
   "status": "POSTPONED"
 }
@@ -799,6 +811,9 @@ Response `204`. Errors: `403` (not the sender), `404`.
   its amounts. It is not a currency conversion: changing it does not restate existing `price`
   or `price_paid` values. The dashboard's aggregate `revenue` is unit-less because it sums
   events that may use different units.
+- **Coordinates**: an event's `latitude`/`longitude` are an optional pair. They must be set
+  together, latitude within `[-90, 90]` and longitude within `[-180, 180]`, enforced by both the
+  validator and `CHECK` constraints on `events`.
 - **Payments**: the schema has `price_paid` but no payment table. For paid tiers, `POST /tiers/{tierId}/tickets` currently issues the ticket directly. If you add real payments, this endpoint should become a checkout flow (create a pending order, then confirm via webhook).
 - **Event cancellation**: `cancel` leaves tickets `VALID` (they can be refunded individually); check-in rejects tickets of a `CANCELLED` event.
 - **`validUntil`**: nullable in the schema. A sensible default is the event's `endTime` at issue time.
