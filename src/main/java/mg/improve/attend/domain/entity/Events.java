@@ -1,5 +1,6 @@
 package mg.improve.attend.domain.entity;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.UUID;
 import lombok.AllArgsConstructor;
@@ -23,6 +24,8 @@ public class Events {
     private Instant endTime;
     private boolean isPublic;
     private String location;
+    private BigDecimal latitude;
+    private BigDecimal longitude;
     private String priceUnit;
     private EventStatus status;
     private Instant createdAt;
