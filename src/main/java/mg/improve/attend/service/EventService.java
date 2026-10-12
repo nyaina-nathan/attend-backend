@@ -36,6 +36,7 @@ import mg.improve.attend.exceptions.UnauthorizedException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventPaymentMethodRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
@@ -69,6 +70,7 @@ public class EventService {
     private final JEventPaymentMethodRepository paymentMethods;
     private final JTicketTierRepository tiers;
     private final JTicketRepository tickets;
+    private final JTicketOrderRepository orders;
     private final JUsersRepository users;
     private final EventsMapper eventsMapper;
     private final EventOrganizerMapper organizerMapper;
@@ -255,7 +257,9 @@ public class EventService {
             throw new ConflictException("EVENT_HAS_TICKETS", "Tickets exist for this event; cancel it instead");
         }
 
-        // No tickets, so tiers, payment methods and organizer rows can go before the event.
+        // No tickets, so orders (with their items), tiers, payment methods and organizer rows
+        // can go before the event itself.
+        orders.deleteByEventId(eventId);
         organizers.deleteByEventId(eventId);
         paymentMethods.deleteByEventId(eventId);
         tiers.deleteByEventId(eventId);

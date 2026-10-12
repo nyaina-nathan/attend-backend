@@ -19,6 +19,7 @@ import mg.improve.attend.exceptions.ErrorDetail;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
@@ -46,6 +47,7 @@ public class UserService {
     private final JEventOrganizerRepository organizers;
     private final JTicketTierRepository tiers;
     private final JTicketRepository tickets;
+    private final JTicketOrderRepository orders;
     private final UsersMapper usersMapper;
     private final UserValidator validator;
     private final PasswordEncoder passwordEncoder;
@@ -60,13 +62,15 @@ public class UserService {
      */
     @Transactional
     public void deleteAccount(UUID userId) {
-        // 1. Tickets the user owns, in any event.
+        // 1. Tickets and orders the user owns, in any event.
         tickets.deleteByOwnerId(userId);
+        orders.deleteByOwnerId(userId);
 
         // 2. Events they created: remove every dependent row before the event itself.
         List<UUID> createdEventIds = organizers.findEventIdsByUserAndRole(userId, EventRole.CREATOR);
         for (UUID eventId : createdEventIds) {
             tickets.deleteByEventId(eventId);
+            orders.deleteByEventId(eventId);
             tiers.deleteByEventId(eventId);
             organizers.deleteByEventId(eventId);
             events.deleteById(eventId);

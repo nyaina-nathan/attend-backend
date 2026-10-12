@@ -8,12 +8,14 @@ import mg.improve.attend.domain.dto.request.PaymentMethodUpdateRequest;
 import mg.improve.attend.domain.dto.response.PaymentMethodResponse;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.mapper.EventPaymentMethodMapper;
+import mg.improve.attend.exceptions.ConflictException;
 import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.exceptions.UnauthorizedException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventPaymentMethodRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderRepository;
 import mg.improve.attend.repository.entities.JEventPaymentMethod;
 import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.validator.PaymentMethodValidator;
@@ -32,6 +34,7 @@ public class EventPaymentMethodService {
     private final JEventsRepository events;
     private final JEventOrganizerRepository organizers;
     private final JEventPaymentMethodRepository paymentMethods;
+    private final JTicketOrderRepository ticketOrders;
     private final EventPaymentMethodMapper paymentMethodMapper;
     private final PaymentMethodValidator validator;
 
@@ -138,6 +141,12 @@ public class EventPaymentMethodService {
     public void deletePaymentMethod(UUID paymentMethodId, UUID userId) {
         JEventPaymentMethod method = loadPaymentMethodOr404(paymentMethodId);
         requireCreator(method.getEvent().getId(), userId);
+
+        if (ticketOrders.existsByPaymentMethod_Id(paymentMethodId)) {
+            throw new ConflictException("PAYMENT_METHOD_IN_USE",
+                    "Payment orders reference this payment method");
+        }
+
         paymentMethods.delete(method);
     }
 

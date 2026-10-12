@@ -30,6 +30,7 @@ import mg.improve.attend.exceptions.ErrorDetail;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
@@ -69,6 +70,9 @@ class UserServiceTests {
     private JTicketRepository tickets;
 
     @Mock
+    private JTicketOrderRepository orders;
+
+    @Mock
     private UsersMapper usersMapper;
 
     @Mock
@@ -103,6 +107,8 @@ class UserServiceTests {
 
         verify(tickets).deleteByOwnerId(userId);
         verify(tickets, never()).deleteByEventId(any());
+        verify(orders).deleteByOwnerId(userId);
+        verify(orders, never()).deleteByEventId(any());
         verify(organizers).deleteByUserId(userId);
         verify(tickets).clearCheckInByUserId(userId);
         verify(users, never()).delete(any(JUsers.class));
@@ -123,6 +129,8 @@ class UserServiceTests {
 
         verify(tickets).deleteByEventId(firstEvent);
         verify(tickets).deleteByEventId(secondEvent);
+        verify(orders).deleteByEventId(firstEvent);
+        verify(orders).deleteByEventId(secondEvent);
         verify(tiers).deleteByEventId(firstEvent);
         verify(tiers).deleteByEventId(secondEvent);
         verify(organizers).deleteByEventId(firstEvent);
@@ -143,9 +151,11 @@ class UserServiceTests {
 
         userService.deleteAccount(userId);
 
-        InOrder inOrder = inOrder(tickets, tiers, organizers, events, users);
+        InOrder inOrder = inOrder(tickets, orders, tiers, organizers, events, users);
         inOrder.verify(tickets).deleteByOwnerId(userId);
+        inOrder.verify(orders).deleteByOwnerId(userId);
         inOrder.verify(tickets).deleteByEventId(eventId);
+        inOrder.verify(orders).deleteByEventId(eventId);
         inOrder.verify(tiers).deleteByEventId(eventId);
         inOrder.verify(organizers).deleteByEventId(eventId);
         inOrder.verify(events).deleteById(eventId);

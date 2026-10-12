@@ -17,6 +17,7 @@ import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.exceptions.UnauthorizedException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderItemRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.entities.JEvents;
@@ -41,6 +42,7 @@ public class TicketTierService {
     private final JEventOrganizerRepository organizers;
     private final JTicketTierRepository tiers;
     private final JTicketRepository tickets;
+    private final JTicketOrderItemRepository ticketOrderItems;
     private final TicketTierMapper tierMapper;
     private final TicketTierValidator validator;
 
@@ -146,6 +148,9 @@ public class TicketTierService {
 
         if (tickets.existsByTier_Id(tierId)) {
             throw new ConflictException("TIER_HAS_TICKETS", "Tickets exist for this tier");
+        }
+        if (ticketOrderItems.existsByTier_Id(tierId)) {
+            throw new ConflictException("TIER_IN_USE", "Payment orders reference this tier");
         }
 
         tiers.delete(tier);
