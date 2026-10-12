@@ -1,0 +1,1 @@
+alter table events add column if not exists price_unit varchar(10) default 'USD';
