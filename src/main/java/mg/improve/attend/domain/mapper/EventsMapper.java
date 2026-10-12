@@ -19,6 +19,8 @@ public class EventsMapper {
         domain.setEndTime(entity.getEndTime());
         domain.setPublic(entity.isPublic());
         domain.setLocation(entity.getLocation());
+        domain.setLatitude(entity.getLatitude());
+        domain.setLongitude(entity.getLongitude());
         domain.setPriceUnit(entity.getPriceUnit());
         domain.setStatus(entity.getStatus());
         domain.setCreatedAt(entity.getCreatedAt());
@@ -38,6 +40,8 @@ public class EventsMapper {
         entity.setEndTime(domain.getEndTime());
         entity.setPublic(domain.isPublic());
         entity.setLocation(domain.getLocation());
+        entity.setLatitude(domain.getLatitude());
+        entity.setLongitude(domain.getLongitude());
         entity.setPriceUnit(domain.getPriceUnit());
         entity.setStatus(domain.getStatus());
         entity.setCreatedAt(domain.getCreatedAt());
