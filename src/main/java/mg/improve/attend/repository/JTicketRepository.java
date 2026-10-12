@@ -95,6 +95,10 @@ public interface JTicketRepository extends JpaRepository<JTicket, UUID> {
 
     boolean existsByTier_Id(UUID tierId);
 
+    /** Whether the owner holds a ticket of the tier in one of the given statuses. */
+    boolean existsByTier_IdAndOwner_IdAndTicketStatusIn(UUID tierId, UUID ownerId,
+            Collection<TicketStatus> statuses);
+
     long countByTier_IdAndTicketStatusIn(UUID tierId, Collection<TicketStatus> statuses);
 
     /**

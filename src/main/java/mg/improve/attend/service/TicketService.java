@@ -12,6 +12,7 @@ import mg.improve.attend.domain.dto.response.PageAttendeeTicket;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
+import mg.improve.attend.domain.dto.response.TierTicketPresence;
 import mg.improve.attend.domain.entity.Ticket;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
@@ -250,6 +251,22 @@ public class TicketService {
         Ticket domain = ticketMapper.toDomain(ticket);
         domain.setTicketStatus(TicketStatus.REFUNDED);
         return TicketResponse.from(domain);
+    }
+
+    /**
+     * Reports whether the caller already holds a ticket in the tier. Counts the
+     * capacity-consuming statuses ({@code VALID}, {@code USED}), so cancelled and refunded
+     * tickets do not count. The tier must exist; otherwise {@code 404}.
+     */
+    @Transactional(readOnly = true)
+    public TierTicketPresence checkTierTicketPresence(UUID tierId, UUID userId) {
+        if (!tiers.existsById(tierId)) {
+            throw new NotFoundException("TIER_NOT_FOUND", "Tier not found");
+        }
+
+        boolean present = tickets.existsByTier_IdAndOwner_IdAndTicketStatusIn(
+                tierId, userId, CAPACITY_STATUSES);
+        return TierTicketPresence.of(present);
     }
 
     private JTicket loadTicketOr404(UUID ticketId) {
