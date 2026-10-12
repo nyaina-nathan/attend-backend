@@ -17,6 +17,7 @@ import mg.improve.attend.domain.dto.response.PageAttendeeTicket;
 import mg.improve.attend.domain.dto.response.PageTicket;
 import mg.improve.attend.domain.dto.response.TicketDetail;
 import mg.improve.attend.domain.dto.response.TicketResponse;
+import mg.improve.attend.domain.dto.response.TierTicketPresence;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
@@ -173,6 +174,85 @@ class TicketControllerIT extends IntegrationTestSupport {
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.CONFLICT.value());
         assertThat(readBody(response, ApiError.class).error()).isEqualTo("EVENT_NOT_OPEN");
+    }
+
+    // ------------------------------------------------------------------
+    // GET /api/tiers/{tierId}/check
+    // ------------------------------------------------------------------
+
+    @Test
+    void checkTierPresence_returnsTrueWhenCallerHoldsTicket() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        HttpResponse<String> buyerReg = register("buyer@example.com", "secret123", "Buyer", "buyer");
+        JUsers buyer = users.findByEmail("buyer@example.com").orElseThrow();
+        seedTicket(buyer, tier, TicketStatus.VALID);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(buyerReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tiers/" + tier.getId() + "/check", null,
+                auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        assertThat(readBody(response, TierTicketPresence.class).isPresent()).isTrue();
+        assertThat(response.body()).contains("\"isPresent\":true");
+    }
+
+    @Test
+    void checkTierPresence_returnsFalseWhenCallerHasNoTicket() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        HttpResponse<String> buyerReg = register("buyer@example.com", "secret123", "Buyer", "buyer");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(buyerReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tiers/" + tier.getId() + "/check", null,
+                auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        assertThat(readBody(response, TierTicketPresence.class).isPresent()).isFalse();
+    }
+
+    @Test
+    void checkTierPresence_ignoresCancelledAndRefundedTickets() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+        HttpResponse<String> buyerReg = register("buyer@example.com", "secret123", "Buyer", "buyer");
+        JUsers buyer = users.findByEmail("buyer@example.com").orElseThrow();
+        seedTicket(buyer, tier, TicketStatus.CANCELLED);
+        seedTicket(buyer, tier, TicketStatus.REFUNDED);
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(buyerReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tiers/" + tier.getId() + "/check", null,
+                auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        assertThat(readBody(response, TierTicketPresence.class).isPresent()).isFalse();
+    }
+
+    @Test
+    void checkTierPresence_requiresAuthentication() {
+        JUsers owner = seedUser("owner@example.com", "owner", "secret123");
+        JEvents event = seedEvent(owner, EventStatus.OK, Instant.now().plus(Duration.ofDays(1)));
+        JTicketTier tier = seedTier(event, "VIP", "40.00", 10);
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tiers/" + tier.getId() + "/check", null,
+                new HttpHeaders());
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
+    }
+
+    @Test
+    void checkTierPresence_returnsNotFoundForUnknownTier() {
+        HttpResponse<String> buyerReg = register("buyer@example.com", "secret123", "Buyer", "buyer");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(buyerReg));
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/tiers/" + UUID.randomUUID() + "/check",
+                null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.NOT_FOUND.value());
+        assertThat(readBody(response, ApiError.class).error()).isEqualTo("TIER_NOT_FOUND");
     }
 
     // ------------------------------------------------------------------
