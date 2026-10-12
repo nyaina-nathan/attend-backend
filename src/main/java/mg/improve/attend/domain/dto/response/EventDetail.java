@@ -1,6 +1,7 @@
 package mg.improve.attend.domain.dto.response;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -20,6 +21,8 @@ public record EventDetail(
         Instant endTime,
         @JsonProperty("isPublic") boolean isPublic,
         String location,
+        BigDecimal latitude,
+        BigDecimal longitude,
         String priceUnit,
         EventStatus status,
         EventRole myRole,
@@ -36,6 +39,8 @@ public record EventDetail(
                 event.getEndTime(),
                 event.isPublic(),
                 event.getLocation(),
+                event.getLatitude(),
+                event.getLongitude(),
                 event.getPriceUnit(),
                 event.getStatus(),
                 myRole,

@@ -16,6 +16,8 @@ public record EventSummary(
         Instant startTime,
         Instant endTime,
         String location,
+        BigDecimal latitude,
+        BigDecimal longitude,
         String priceUnit,
         EventStatus status,
         BigDecimal minPrice) {
@@ -27,6 +29,8 @@ public record EventSummary(
                 event.getStartTime(),
                 event.getEndTime(),
                 event.getLocation(),
+                event.getLatitude(),
+                event.getLongitude(),
                 event.getPriceUnit(),
                 event.getStatus(),
                 minPrice);

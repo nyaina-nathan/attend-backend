@@ -1,5 +1,6 @@
 package mg.improve.attend.validator;
 
+import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +24,10 @@ public class EventValidator {
     private static final int TITLE_MAX = 255;
     private static final int LOCATION_MAX = 255;
     private static final int PRICE_UNIT_MAX = 10;
+    private static final BigDecimal LATITUDE_MIN = new BigDecimal("-90");
+    private static final BigDecimal LATITUDE_MAX = new BigDecimal("90");
+    private static final BigDecimal LONGITUDE_MIN = new BigDecimal("-180");
+    private static final BigDecimal LONGITUDE_MAX = new BigDecimal("180");
     private static final int SIZE_MIN = 1;
     private static final int SIZE_MAX = 100;
     private static final String DEFAULT_SORT_FIELD = "startTime";
@@ -35,6 +40,7 @@ public class EventValidator {
         validateStartTime(request.startTime(), details);
         validateEndTime(request.startTime(), request.endTime(), details);
         validateLocation(request.location(), details);
+        validateCoordinates(request.latitude(), request.longitude(), null, null, details);
         validatePriceUnit(request.priceUnit(), details);
 
         if (!details.isEmpty()) {
@@ -71,6 +77,46 @@ public class EventValidator {
     }
 
     /**
+     * Validates the optional {@code latitude}/{@code longitude} pair. Each value must be within
+     * its geographic range, and the two must always be present together: a request that only
+     * supplies one side is completed by the stored value (if any) before the check.
+     */
+    private void validateCoordinates(BigDecimal latitude, BigDecimal longitude,
+            BigDecimal existingLatitude, BigDecimal existingLongitude, List<ErrorDetail> details) {
+        if (latitude != null) {
+            validateLatitude(latitude, details);
+        }
+        if (longitude != null) {
+            validateLongitude(longitude, details);
+        }
+
+        BigDecimal effectiveLatitude = latitude != null ? latitude : existingLatitude;
+        BigDecimal effectiveLongitude = longitude != null ? longitude : existingLongitude;
+        if ((effectiveLatitude == null) != (effectiveLongitude == null)) {
+            if (latitude == null) {
+                details.add(new ErrorDetail("latitude", "must be provided together with longitude"));
+            }
+            if (longitude == null) {
+                details.add(new ErrorDetail("longitude", "must be provided together with latitude"));
+            }
+        }
+    }
+
+    private void validateLatitude(BigDecimal latitude, List<ErrorDetail> details) {
+        if (latitude.compareTo(LATITUDE_MIN) < 0 || latitude.compareTo(LATITUDE_MAX) > 0) {
+            details.add(new ErrorDetail("latitude",
+                    "must be between " + LATITUDE_MIN + " and " + LATITUDE_MAX));
+        }
+    }
+
+    private void validateLongitude(BigDecimal longitude, List<ErrorDetail> details) {
+        if (longitude.compareTo(LONGITUDE_MIN) < 0 || longitude.compareTo(LONGITUDE_MAX) > 0) {
+            details.add(new ErrorDetail("longitude",
+                    "must be between " + LONGITUDE_MIN + " and " + LONGITUDE_MAX));
+        }
+    }
+
+    /**
      * A price unit is an optional, free-form currency/code. Blank values are rejected; unknown
      * units are accepted, only the stored column width is enforced.
      */
@@ -87,9 +133,11 @@ public class EventValidator {
 
     /**
      * Validates a partial {@link EventUpdateRequest}. Only present fields are checked; the
-     * time range is validated against the event's current values when one side is omitted.
+     * time range and the coordinate pair are validated against the event's current values when
+     * one side is omitted.
      */
-    public void validateUpdate(EventUpdateRequest request, Instant existingStartTime, Instant existingEndTime) {
+    public void validateUpdate(EventUpdateRequest request, Instant existingStartTime, Instant existingEndTime,
+            BigDecimal existingLatitude, BigDecimal existingLongitude) {
         List<ErrorDetail> details = new ArrayList<>();
 
         if (request.title() != null) {
@@ -98,6 +146,7 @@ public class EventValidator {
         if (request.location() != null) {
             validateLocation(request.location(), details);
         }
+        validateCoordinates(request.latitude(), request.longitude(), existingLatitude, existingLongitude, details);
         if (request.priceUnit() != null) {
             validatePriceUnit(request.priceUnit(), details);
         }
