@@ -7,7 +7,7 @@ Format: JSON (`Content-Type: application/json`), UTF-8.
 
 - **IDs**: UUID strings.
 - **Timestamps**: ISO-8601 UTC, e.g. `2026-11-20T18:00:00Z`.
-- **Money**: decimal as a string-safe number with 2 decimals (`"price": 25.00`). Currency is not in the schema, so assume a single currency for now.
+- **Money**: decimal as a string-safe number with 2 decimals (`"price": 25.00`). Each event carries a `priceUnit` (a free-form currency/unit code, default `USD`) that applies to every amount on that event: its tiers' `price`, `minPrice`, ticket `pricePaid`, and `revenue`. It is **not converted** when changed — it only relabels the stored numbers. Aggregate dashboard `revenue` spans events that may use different units, so it is unit-less.
 - **Auth**: JWT access token + refresh token, both sent as `HttpOnly` cookies (`access_token`, `refresh_token`). Endpoints marked 🔒 require the access cookie.
 - **Never returned**: `password_hash`, `token_hash`.
 - **Pagination** (list endpoints): query `?page=0&size=20`, response wrapper:
@@ -259,6 +259,7 @@ Response `200`:
       "startTime": "2026-11-20T18:00:00Z",
       "endTime": "2026-11-20T22:00:00Z",
       "location": "Antananarivo, Alliance Française",
+      "priceUnit": "USD",
       "status": "OK",
       "myRole": "CREATOR",
       "totalCapacity": 250,
@@ -291,7 +292,8 @@ Response `200`:
         "id": "c4d5e6f7-0000-4000-8000-000000000003",
         "title": "Antsirabe Food Fair",
         "startTime": "2026-12-05T09:00:00Z",
-        "location": "Antsirabe"
+        "location": "Antsirabe",
+        "priceUnit": "USD"
       },
       "tier": { "id": "a1b2c3d4-0000-4000-8000-000000000009", "tierName": "Standard" },
       "ticketStatus": "VALID"
@@ -304,9 +306,11 @@ Fields:
 - `organizing.eventsTotal`: all events the caller organizes, whatever their status.
 - `organizing.eventsUpcoming`: count of upcoming events.
 - `organizing.ticketsSold` and `revenue`: counted tickets and the sum of `price_paid`, **scoped
-  to upcoming events only**.
+  to upcoming events only**. `revenue` is unit-less: it sums events that may use different
+  `priceUnit` values.
 - `organizing.nextEvent`: the upcoming event with the earliest `startTime`, or `null` if none.
-  The counters use the same rules as `GET /events/{eventId}/stats`.
+  The counters use the same rules as `GET /events/{eventId}/stats`; its `priceUnit` is that
+  event's currency.
 - `organizing.attention`: at most 5 items, ordered by `startTime` ascending. Each item has a
   `type`:
 
@@ -344,10 +348,12 @@ Request:
   "startTime": "2026-11-20T18:00:00Z",
   "endTime": "2026-11-20T22:00:00Z",
   "isPublic": true,
-  "location": "Antananarivo, Alliance Française"
+  "location": "Antananarivo, Alliance Française",
+  "priceUnit": "USD"
 }
 ```
-`description` and `location` optional; `isPublic` defaults to `true`.
+`description`, `location` and `priceUnit` optional; `isPublic` defaults to `true`, `priceUnit`
+defaults to `USD`. `priceUnit` is a free-form currency/unit code, at most 10 characters.
 
 Response `201`:
 ```json
@@ -359,6 +365,7 @@ Response `201`:
   "endTime": "2026-11-20T22:00:00Z",
   "isPublic": true,
   "location": "Antananarivo, Alliance Française",
+  "priceUnit": "USD",
   "status": "OK",
   "myRole": "CREATOR",
   "createdAt": "2026-10-05T10:00:00Z",
@@ -384,6 +391,7 @@ Response `200`: paginated wrapper with items:
   "startTime": "2026-11-20T18:00:00Z",
   "endTime": "2026-11-20T22:00:00Z",
   "location": "Antananarivo, Alliance Française",
+  "priceUnit": "USD",
   "status": "OK",
   "minPrice": 0.00
 }
@@ -402,6 +410,7 @@ Response `200`:
   "endTime": "2026-11-20T22:00:00Z",
   "isPublic": true,
   "location": "Antananarivo, Alliance Française",
+  "priceUnit": "USD",
   "status": "OK",
   "myRole": null,
   "tiers": [
@@ -432,10 +441,12 @@ Request:
   "endTime": "2026-11-21T22:00:00Z",
   "isPublic": false,
   "location": "New venue",
+  "priceUnit": "EUR",
   "status": "POSTPONED"
 }
 ```
-Response `200`: full event object. Errors: `400`, `403`, `404`.
+Response `200`: full event object. Errors: `400`, `403`, `404`. Changing `priceUnit` relabels
+the event's amounts without converting them.
 
 ### POST `/events/{eventId}/cancel` 🔒
 Creator only (`CREATOR`). Sets `status = CANCELLED`. No body. Tickets are left as-is (check-in rejects tickets of a cancelled event).
@@ -496,6 +507,7 @@ Response `200`:
     "eventId": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
     "tierName": "VIP",
     "price": 40.00,
+    "priceUnit": "USD",
     "capacity": 50,
     "remaining": 12
   }
@@ -553,7 +565,8 @@ Response `201`:
     "id": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
     "title": "Tana Jazz Night",
     "startTime": "2026-11-20T18:00:00Z",
-    "location": "Antananarivo, Alliance Française"
+    "location": "Antananarivo, Alliance Française",
+    "priceUnit": "USD"
   },
   "tier": {
     "id": "a1b2c3d4-0000-4000-8000-000000000001",
@@ -659,6 +672,7 @@ Response `200`:
 ```json
 {
   "eventId": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
+  "priceUnit": "USD",
   "totalCapacity": 250,
   "ticketsIssued": 107,
   "ticketsCheckedIn": 64,
@@ -696,7 +710,8 @@ Response `201`:
     "id": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
     "title": "Tana Jazz Night",
     "startTime": "2026-11-20T18:00:00Z",
-    "location": "Antananarivo, Alliance Française"
+    "location": "Antananarivo, Alliance Française",
+    "priceUnit": "USD"
   },
   "sender": { "id": "0b6f1c5e-9d0a-4b7e-8f3a-2a1c6e9b7d10", "fullName": "Jane Doe", "username": "janedoe" },
   "receiver": { "id": "9a8b7c6d-0000-4000-8000-000000000009", "fullName": "John Smith", "username": "johnsmith" },
@@ -780,6 +795,10 @@ Response `204`. Errors: `403` (not the sender), `404`.
 
 ## Notes and open decisions
 
+- **Currency**: each event carries a `priceUnit` (free-form, default `USD`) that labels all of
+  its amounts. It is not a currency conversion: changing it does not restate existing `price`
+  or `price_paid` values. The dashboard's aggregate `revenue` is unit-less because it sums
+  events that may use different units.
 - **Payments**: the schema has `price_paid` but no payment table. For paid tiers, `POST /tiers/{tierId}/tickets` currently issues the ticket directly. If you add real payments, this endpoint should become a checkout flow (create a pending order, then confirm via webhook).
 - **Event cancellation**: `cancel` leaves tickets `VALID` (they can be refunded individually); check-in rejects tickets of a `CANCELLED` event.
 - **`validUntil`**: nullable in the schema. A sensible default is the event's `endTime` at issue time.
