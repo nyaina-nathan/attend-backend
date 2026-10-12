@@ -76,7 +76,8 @@ abstract class IntegrationTestSupport {
     @BeforeEach
     void resetDatabase() {
         jdbcTemplate.execute(
-                "TRUNCATE TABLE refresh_token, ticket, ticket_tier, event_organizer, invitations, events, users CASCADE");
+                "TRUNCATE TABLE refresh_token, ticket, ticket_tier, event_payment_methods, event_organizer, "
+                        + "invitations, events, users CASCADE");
     }
 
     // ------------------------------------------------------------------

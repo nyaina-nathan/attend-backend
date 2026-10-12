@@ -48,7 +48,9 @@ public class SecurityConfig {
                         // Public reads. GET /events/{eventId} stays public because visibility
                         // rules are enforced in the service layer.
                         .requestMatchers(HttpMethod.GET,
-                                "/api/events", "/api/events/{eventId}", "/api/events/{eventId}/tiers").permitAll()
+                                "/api/events", "/api/events/{eventId}", "/api/events/{eventId}/tiers",
+                                "/api/events/{eventId}/payment-methods",
+                                "/api/payment-methods/{paymentMethodId}").permitAll()
                         // Everything else requires a valid access token.
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex.authenticationEntryPoint(restAuthenticationEntryPoint))
