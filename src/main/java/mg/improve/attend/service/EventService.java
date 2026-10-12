@@ -90,6 +90,8 @@ public class EventService {
         event.setEndTime(request.endTime());
         event.setPublic(request.isPublic() == null || request.isPublic());
         event.setLocation(request.location());
+        event.setLatitude(request.latitude());
+        event.setLongitude(request.longitude());
         if (request.priceUnit() != null) {
             event.setPriceUnit(request.priceUnit());
         }
@@ -202,7 +204,8 @@ public class EventService {
     @Transactional
     public EventDetail updateEvent(UUID eventId, UUID userId, EventUpdateRequest request) {
         JEvents event = requireCreator(eventId, userId);
-        validator.validateUpdate(request, event.getStartTime(), event.getEndTime());
+        validator.validateUpdate(request, event.getStartTime(), event.getEndTime(),
+                event.getLatitude(), event.getLongitude());
 
         if (request.title() != null) {
             event.setTitle(request.title());
@@ -221,6 +224,12 @@ public class EventService {
         }
         if (request.location() != null) {
             event.setLocation(request.location());
+        }
+        if (request.latitude() != null) {
+            event.setLatitude(request.latitude());
+        }
+        if (request.longitude() != null) {
+            event.setLongitude(request.longitude());
         }
         if (request.priceUnit() != null) {
             event.setPriceUnit(request.priceUnit());
