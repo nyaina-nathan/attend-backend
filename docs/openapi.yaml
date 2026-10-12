@@ -47,6 +47,8 @@ tags:
     description: Ticket tiers (pricing and capacity).
   - name: Payment methods
     description: Per-event payment methods describing how an event accepts money.
+  - name: Orders
+    description: Buyer-submitted ticket orders reviewed by event organizers.
   - name: Tickets
     description: Ticket issuance, check-in, cancellation and refunds.
   - name: Stats
@@ -1101,6 +1103,182 @@ paths:
         '404':
           $ref: '#/components/responses/NotFound'
 
+  /events/{eventId}/orders:
+    parameters:
+      - $ref: '#/components/parameters/EventIdParam'
+    get:
+      tags: [Orders]
+      summary: List an event's ticket orders
+      description: Organizers only. Orders on the event, newest first.
+      operationId: listEventOrders
+      parameters:
+        - $ref: '#/components/parameters/OrderStatusParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Paginated orders of the event.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageOrder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    post:
+      tags: [Orders]
+      summary: Create a ticket order
+      description: |
+        Any authenticated user. Creates a `PENDING` order that pays with one of the event's
+        payment methods. Every item's tier and the payment method must belong to the event.
+      operationId: createOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderCreateRequest'
+      responses:
+        '201':
+          description: Order created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Payment method inactive, duplicate transaction reference, or event not open.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/me:
+    get:
+      tags: [Orders]
+      summary: List the caller's ticket orders
+      description: The caller's own orders, newest first.
+      operationId: listMyOrders
+      parameters:
+        - $ref: '#/components/parameters/OrderStatusParam'
+        - $ref: '#/components/parameters/PageParam'
+        - $ref: '#/components/parameters/SizeParam'
+      responses:
+        '200':
+          description: Paginated orders of the caller.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PageOrder'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /orders/{orderId}:
+    parameters:
+      - $ref: '#/components/parameters/OrderIdParam'
+    get:
+      tags: [Orders]
+      summary: Get a ticket order
+      description: Allowed for the order's owner or any organizer of its event.
+      operationId: getOrder
+      responses:
+        '200':
+          description: Order object.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /orders/{orderId}/approve:
+    parameters:
+      - $ref: '#/components/parameters/OrderIdParam'
+    post:
+      tags: [Orders]
+      summary: Approve a ticket order
+      description: |
+        An `ADMIN` or `CREATOR` of the order's event. Only a `PENDING` order can be approved.
+        Issues one `VALID` ticket per unit of each item's `quantity`, in one transaction with a
+        row lock on each tier (no overselling). No body required.
+      operationId: approveOrder
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Approved order with the issued tickets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Order not pending, sold out, or event not open.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /orders/{orderId}/refuse:
+    parameters:
+      - $ref: '#/components/parameters/OrderIdParam'
+    post:
+      tags: [Orders]
+      summary: Refuse a ticket order
+      description: |
+        An `ADMIN` or `CREATOR` of the order's event. Only a `PENDING` order can be refused and
+        a `reason` is required. Records the reason and creates placeholder `REFUNDED` tickets
+        (`pricePaid = 0.00`) for the ordered quantities.
+      operationId: refuseOrder
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrderRefuseRequest'
+      responses:
+        '200':
+          description: Refused order with the placeholder tickets.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Order'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Order not pending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
   /tiers/{tierId}/tickets:
     post:
       tags: [Tickets]
@@ -1539,6 +1717,20 @@ components:
       schema:
         type: string
         format: uuid
+    OrderIdParam:
+      name: orderId
+      in: path
+      required: true
+      description: Ticket order UUID.
+      schema:
+        type: string
+        format: uuid
+    OrderStatusParam:
+      name: status
+      in: query
+      description: Filter orders by status.
+      schema:
+        $ref: '#/components/schemas/OrderStatus'
 
   responses:
     BadRequest:
@@ -2388,6 +2580,148 @@ components:
         isActive:
           type: boolean
 
+    # ----------------------------------------------------------------- orders
+    OrderStatus:
+      type: string
+      enum: [PENDING, APPROVED, REFUSED, CANCELLED]
+
+    OrderItem:
+      type: object
+      required: [id, tierId, tierName, quantity, unitPrice, lineTotal]
+      properties:
+        id:
+          type: string
+          format: uuid
+        tierId:
+          type: string
+          format: uuid
+        tierName:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unitPrice:
+          type: number
+          format: double
+          minimum: 0
+        lineTotal:
+          type: number
+          format: double
+          minimum: 0
+
+    OrderTicketRef:
+      type: object
+      required: [id, ticketStatus]
+      properties:
+        id:
+          type: string
+          format: uuid
+        ticketStatus:
+          $ref: '#/components/schemas/TicketStatus'
+
+    Order:
+      type: object
+      required: [id, eventId, owner, paymentMethodId, priceUnit, orderStatus, items, total, tickets, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        eventId:
+          type: string
+          format: uuid
+        owner:
+          $ref: '#/components/schemas/UserRef'
+        paymentMethodId:
+          type: string
+          format: uuid
+        transactionReference:
+          oneOf:
+            - type: string
+            - type: 'null'
+        priceUnit:
+          type: string
+          maxLength: 10
+        orderStatus:
+          $ref: '#/components/schemas/OrderStatus'
+        refusalReason:
+          oneOf:
+            - type: string
+            - type: 'null'
+        reviewedBy:
+          oneOf:
+            - $ref: '#/components/schemas/UserRef'
+            - type: 'null'
+        reviewedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: 'null'
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderItem'
+        total:
+          type: number
+          format: double
+          minimum: 0
+        tickets:
+          type: array
+          items:
+            $ref: '#/components/schemas/OrderTicketRef'
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+
+    OrderItemCreateRequest:
+      type: object
+      required: [tierId, quantity]
+      properties:
+        tierId:
+          type: string
+          format: uuid
+        quantity:
+          type: integer
+          minimum: 1
+
+    OrderCreateRequest:
+      type: object
+      required: [paymentMethodId, items]
+      properties:
+        paymentMethodId:
+          type: string
+          format: uuid
+        transactionReference:
+          oneOf:
+            - type: string
+            - type: 'null'
+          maxLength: 255
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/OrderItemCreateRequest'
+
+    OrderRefuseRequest:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+
+    PageOrder:
+      allOf:
+        - $ref: '#/components/schemas/PageMeta'
+        - type: object
+          required: [content]
+          properties:
+            content:
+              type: array
+              items:
+                $ref: '#/components/schemas/Order'
+
     # ---------------------------------------------------------------- tickets
     TicketStatus:
       type: string
@@ -2465,6 +2799,12 @@ components:
           description: Frozen at issue time; later price changes do not affect it.
         ticketStatus:
           $ref: '#/components/schemas/TicketStatus'
+        orderId:
+          description: Order that issued this ticket, or `null` for direct/legacy tickets.
+          oneOf:
+            - type: string
+              format: uuid
+            - type: 'null'
         checkedInAt:
           oneOf:
             - type: string

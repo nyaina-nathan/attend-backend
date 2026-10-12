@@ -91,6 +91,9 @@ Endpoints that don't carry the event id in the path must resolve it before the c
 | `GET /tickets/{ticketId}` | owner **or** organizer of ticket → tier → `id_event` | owner / organizer |
 | `GET /payment-methods/{paymentMethodId}` | payment method → `id_event` | reader (active only) / creator |
 | `PATCH/DELETE /payment-methods/{paymentMethodId}` | payment method → `id_event` | creator |
+| `GET /orders/{orderId}` | order → `id_event` | owner / organizer |
+| `POST /orders/{orderId}/approve` | order → `id_event` | organizer |
+| `POST /orders/{orderId}/refuse` | order → `id_event` | organizer |
 
 Check-in is the critical one: a scanner who is an organizer of event A must never be able to scan a ticket belonging to event B. Always compare against the event resolved from the **ticket**, never an event id supplied by the client.
 
@@ -842,7 +845,137 @@ Response `204`. Errors: `403`, `404`.
 
 ---
 
-## 9. Endpoint summary
+## 9. Ticket orders
+
+`orderStatus`: `PENDING` | `APPROVED` | `REFUSED` | `CANCELLED`
+
+An order ("command") is a buyer's request to buy tickets from an event using one of the
+event's payment methods. It bundles line items (`tierId`, `quantity`, and the `unitPrice`
+frozen at creation); `total = Σ quantity × unitPrice`. Only the event's organizers review
+orders.
+
+### POST `/events/{eventId}/orders` 🔒
+Any authenticated user. Creates a `PENDING` order. Every item's tier and the payment method
+must belong to this event, and the payment method must be active. `transactionReference` is
+optional; when present it must be unique for that payment method.
+
+Request:
+```json
+{
+  "paymentMethodId": "d4f5a6b7-0000-4000-8000-000000000001",
+  "transactionReference": "MPESA-123",
+  "items": [
+    { "tierId": "a1b2c3d4-0000-4000-8000-000000000001", "quantity": 2 }
+  ]
+}
+```
+
+Response `201`:
+```json
+{
+  "id": "c7a1e2b3-0000-4000-8000-000000000002",
+  "eventId": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
+  "owner": { "id": "0b6f1c5e-9d0a-4b7e-8f3a-2a1c6e9b7d10", "fullName": "Jane Doe", "username": "janedoe" },
+  "paymentMethodId": "d4f5a6b7-0000-4000-8000-000000000001",
+  "transactionReference": "MPESA-123",
+  "priceUnit": "USD",
+  "orderStatus": "PENDING",
+  "refusalReason": null,
+  "reviewedBy": null,
+  "reviewedAt": null,
+  "items": [
+    {
+      "id": "e8b2f3c4-0000-4000-8000-000000000003",
+      "tierId": "a1b2c3d4-0000-4000-8000-000000000001",
+      "tierName": "VIP",
+      "quantity": 2,
+      "unitPrice": 40.00,
+      "lineTotal": 80.00
+    }
+  ],
+  "total": 80.00,
+  "tickets": [],
+  "createdAt": "2026-10-12T10:00:00Z",
+  "updatedAt": "2026-10-12T10:00:00Z"
+}
+```
+
+Errors:
+
+| Status | `error` code | Case |
+|---|---|---|
+| 400 | `VALIDATION_ERROR` | Empty `items`, `quantity < 1`, duplicate `tierId`, missing `paymentMethodId`, `transactionReference` > 255 |
+| 404 | `EVENT_NOT_FOUND` / `TIER_NOT_FOUND` / `PAYMENT_METHOD_NOT_FOUND` | Unknown or out-of-event reference |
+| 409 | `PAYMENT_METHOD_INACTIVE` | The chosen method is disabled |
+| 409 | `DUPLICATE_TRANSACTION_REFERENCE` | Reference already used for this payment method |
+| 409 | `EVENT_NOT_OPEN` | Event cancelled or already ended |
+
+### GET `/orders/me` 🔒
+The caller's own orders, newest first.
+
+Query params: `status`, `page`, `size`. Response `200`: paginated wrapper of the order object.
+
+### GET `/events/{eventId}/orders` 🔒
+Organizers only. All orders on the event, for review.
+
+Query params: `status`, `page`, `size`. Response `200`: paginated wrapper of the order object.
+
+### GET `/orders/{orderId}` 🔒
+Owner or any organizer of the order's event. Response `200`: order object.
+
+### POST `/orders/{orderId}/approve` 🔒
+`ADMIN` or `CREATOR` of the order's event. Only a `PENDING` order can be approved. Issues one
+`VALID` ticket per unit of each item's `quantity` (`pricePaid = unitPrice`, `validUntil` = the
+event's `endTime`), in one transaction with a row lock on each tier (no overselling).
+
+Request: empty body.
+
+Response `200`: the order with `"orderStatus": "APPROVED"`, `reviewedBy`/`reviewedAt` set and
+`tickets` populated:
+```json
+{
+  "id": "c7a1e2b3-0000-4000-8000-000000000002",
+  "orderStatus": "APPROVED",
+  "reviewedBy": { "id": "9a8b7c6d-0000-4000-8000-000000000009", "username": "scanner1" },
+  "reviewedAt": "2026-10-12T11:00:00Z",
+  "tickets": [
+    { "id": "7d9e1f2a-4b3c-4d5e-8f6a-1b2c3d4e5f60", "ticketStatus": "VALID" },
+    { "id": "7d9e1f2a-4b3c-4d5e-8f6a-1b2c3d4e5f61", "ticketStatus": "VALID" }
+  ]
+}
+```
+
+Errors:
+
+| Status | `error` code | Case |
+|---|---|---|
+| 403 | `NOT_AN_ORGANIZER` | Caller is not an organizer of the order's event |
+| 404 | `ORDER_NOT_FOUND` | Unknown order id |
+| 409 | `ORDER_NOT_PENDING` | Already approved, refused or cancelled |
+| 409 | `SOLD_OUT` | Not enough remaining capacity in a tier |
+| 409 | `EVENT_NOT_OPEN` | Event cancelled or already ended |
+
+### POST `/orders/{orderId}/refuse` 🔒
+`ADMIN` or `CREATOR` of the order's event. Only a `PENDING` order can be refused, and a
+`reason` is required. Records `refusalReason` and creates one `REFUNDED` ticket per unit of
+each item's `quantity` with `pricePaid = 0.00` (a record only — refunded tickets do not
+consume capacity).
+
+Request:
+```json
+{
+  "reason": "Transfer could not be matched"
+}
+```
+
+Response `200`: the order with `"orderStatus": "REFUSED"`, `refusalReason` and
+`reviewedBy`/`reviewedAt` set, plus the placeholder `tickets`.
+Errors: `400` (blank `reason`), `403 NOT_AN_ORGANIZER`, `404 ORDER_NOT_FOUND`,
+`409 ORDER_NOT_PENDING`.
+
+---
+
+## 10. Endpoint summary
 
 | Method | Path | Auth | Who |
 |---|---|---|---|
@@ -875,6 +1008,12 @@ Response `204`. Errors: `403`, `404`.
 | GET | `/payment-methods/{paymentMethodId}` | optional | same as event; active only (creator sees all) |
 | PATCH | `/payment-methods/{paymentMethodId}` | 🔒 | creator |
 | DELETE | `/payment-methods/{paymentMethodId}` | 🔒 | creator |
+| POST | `/events/{eventId}/orders` | 🔒 | user |
+| GET | `/orders/me` | 🔒 | user (own) |
+| GET | `/events/{eventId}/orders` | 🔒 | organizer |
+| GET | `/orders/{orderId}` | 🔒 | owner / organizer |
+| POST | `/orders/{orderId}/approve` | 🔒 | organizer |
+| POST | `/orders/{orderId}/refuse` | 🔒 | organizer |
 | POST | `/tiers/{tierId}/tickets` | 🔒 | user |
 | GET | `/tiers/{tierId}/check` | 🔒 | user |
 | GET | `/tickets/me` | 🔒 | user |
@@ -896,7 +1035,8 @@ Response `204`. Errors: `403`, `404`.
 - **Coordinates**: an event's `latitude`/`longitude` are an optional pair. They must be set
   together, latitude within `[-90, 90]` and longitude within `[-180, 180]`, enforced by both the
   validator and `CHECK` constraints on `events`.
-- **Payments**: `event_payment_methods` lets an event's creator declare how the event accepts money, but no payment processor is wired in and `price_paid` is still captured directly. For paid tiers, `POST /tiers/{tierId}/tickets` currently issues the ticket directly. If you add real payments, this endpoint should become a checkout flow (create a pending order, then confirm via webhook).
+- **Payments**: `event_payment_methods` lets an event's creator declare how the event accepts money, but no payment processor is wired in and `price_paid` is still captured directly. If you wire a real processor, order approval should be driven by the provider's webhook instead of an organizer clicking approve.
+- **Ticket orders**: a buyer creates a `PENDING` order (`POST /events/{eventId}/orders`) with a payment method and line items; an organizer then `approve`s it (issuing `VALID` tickets) or `refuse`s it with a reason (creating placeholder `REFUNDED` tickets with `pricePaid = 0.00`). `POST /tiers/{tierId}/tickets` remains the direct, no-review path that issues a ticket immediately.
 - **Event cancellation**: `cancel` leaves tickets `VALID` (they can be refunded individually); check-in rejects tickets of a `CANCELLED` event.
 - **`validUntil`**: nullable in the schema. A sensible default is the event's `endTime` at issue time.
 - **Postponed events**: if `startTime`/`endTime` change, existing tickets' `validUntil` should be updated too.
