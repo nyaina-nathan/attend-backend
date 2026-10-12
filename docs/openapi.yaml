@@ -1029,6 +1029,29 @@ paths:
                     path: /api/tiers/a1b2c3d4-0000-4000-8000-000000000001/tickets
                     details: []
 
+  /tiers/{tierId}/check:
+    get:
+      tags: [Tickets]
+      summary: Check whether the caller holds a ticket in the tier
+      description: |
+        Reports whether the authenticated caller already holds a ticket in the tier.
+        Counts the capacity-consuming statuses (`VALID`, `USED`); cancelled and
+        refunded tickets do not count.
+      operationId: checkTierTicketPresence
+      parameters:
+        - $ref: '#/components/parameters/TierIdParam'
+      responses:
+        '200':
+          description: Presence result.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TierTicketPresence'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
   /tickets/me:
     get:
       tags: [Tickets]
@@ -2257,3 +2280,12 @@ components:
           type: number
           format: double
           minimum: 0
+
+    TierTicketPresence:
+      type: object
+      required: [isPresent]
+      properties:
+        isPresent:
+          type: boolean
+          description: |
+            `true` when the caller holds a `VALID` or `USED` ticket in the tier.
