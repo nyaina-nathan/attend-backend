@@ -90,6 +90,9 @@ public class EventService {
         event.setEndTime(request.endTime());
         event.setPublic(request.isPublic() == null || request.isPublic());
         event.setLocation(request.location());
+        if (request.priceUnit() != null) {
+            event.setPriceUnit(request.priceUnit());
+        }
         event.setStatus(EventStatus.OK);
 
         // saveAndFlush so the @CreationTimestamp/@UpdateTimestamp values are set before mapping.
@@ -160,7 +163,7 @@ public class EventService {
      */
     @Transactional(readOnly = true)
     public EventStats getEventStats(UUID eventId, UUID userId) {
-        loadEventOr404(eventId);
+        JEvents event = loadEventOr404(eventId);
         requireOrganizer(eventId, userId);
 
         List<JTicketTier> eventTiers = tiers.findByEvent_Id(eventId);
@@ -189,7 +192,8 @@ public class EventService {
                 .map(TierStats::revenue)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        return new EventStats(eventId, totalCapacity, ticketsIssued, ticketsCheckedIn, revenue, byTier);
+        return new EventStats(eventId, event.getPriceUnit(), totalCapacity, ticketsIssued,
+                ticketsCheckedIn, revenue, byTier);
     }
 
     /**
@@ -217,6 +221,9 @@ public class EventService {
         }
         if (request.location() != null) {
             event.setLocation(request.location());
+        }
+        if (request.priceUnit() != null) {
+            event.setPriceUnit(request.priceUnit());
         }
         if (request.status() != null) {
             event.setStatus(request.status());

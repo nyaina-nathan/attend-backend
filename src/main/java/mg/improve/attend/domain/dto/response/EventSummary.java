@@ -16,6 +16,7 @@ public record EventSummary(
         Instant startTime,
         Instant endTime,
         String location,
+        String priceUnit,
         EventStatus status,
         BigDecimal minPrice) {
 
@@ -26,6 +27,7 @@ public record EventSummary(
                 event.getStartTime(),
                 event.getEndTime(),
                 event.getLocation(),
+                event.getPriceUnit(),
                 event.getStatus(),
                 minPrice);
     }

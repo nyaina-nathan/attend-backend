@@ -104,7 +104,7 @@ class EventServiceTests {
     void createEvent_persistsEventAndCreatorOrganizer() {
         UUID userId = UUID.randomUUID();
         UUID eventId = UUID.randomUUID();
-        EventCreateRequest request = new EventCreateRequest("Jazz Night", "An evening", START, END, null, "Venue");
+        EventCreateRequest request = new EventCreateRequest("Jazz Night", "An evening", START, END, null, "Venue", null);
         JUsers creator = userEntity(userId);
         JEvents saved = eventEntity(eventId, true);
         Events domain = eventDomain(eventId, true);
@@ -140,7 +140,7 @@ class EventServiceTests {
     void createEvent_honorsExplicitIsPublicFalse() {
         UUID userId = UUID.randomUUID();
         UUID eventId = UUID.randomUUID();
-        EventCreateRequest request = new EventCreateRequest("Private", null, START, END, false, null);
+        EventCreateRequest request = new EventCreateRequest("Private", null, START, END, false, null, null);
         JUsers creator = userEntity(userId);
         JEvents saved = eventEntity(eventId, false);
 
@@ -158,7 +158,7 @@ class EventServiceTests {
     @Test
     void createEvent_rejectsUnknownUser() {
         UUID userId = UUID.randomUUID();
-        EventCreateRequest request = new EventCreateRequest("Jazz", null, START, END, null, null);
+        EventCreateRequest request = new EventCreateRequest("Jazz", null, START, END, null, null, null);
         when(users.findById(userId)).thenReturn(Optional.empty());
 
         assertThatExceptionOfType(NotFoundException.class)
@@ -174,7 +174,7 @@ class EventServiceTests {
     @Test
     void createEvent_propagatesValidationFailure() {
         UUID userId = UUID.randomUUID();
-        EventCreateRequest request = new EventCreateRequest(null, null, null, null, null, null);
+        EventCreateRequest request = new EventCreateRequest(null, null, null, null, null, null, null);
         doThrow(new BadRequestException("VALIDATION_ERROR", "Validation failed"))
                 .when(validator).validate(any(EventCreateRequest.class));
 
@@ -385,7 +385,7 @@ class EventServiceTests {
         UUID userId = UUID.randomUUID();
         JEvents entity = eventEntity(eventId, true);
         EventUpdateRequest request = new EventUpdateRequest("Renamed", null, null, null, false, null,
-                EventStatus.POSTPONED);
+                null, EventStatus.POSTPONED);
 
         when(events.findById(eventId)).thenReturn(Optional.of(entity));
         when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, userId, EventRole.CREATOR))
@@ -418,7 +418,7 @@ class EventServiceTests {
 
         assertThatExceptionOfType(ForbiddenException.class)
                 .isThrownBy(() -> eventService.updateEvent(eventId, userId,
-                        new EventUpdateRequest("x", null, null, null, null, null, null)))
+                        new EventUpdateRequest("x", null, null, null, null, null, null, null)))
                 .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("NOT_THE_CREATOR"));
 
         verify(events, never()).saveAndFlush(any());
@@ -433,7 +433,7 @@ class EventServiceTests {
 
         assertThatExceptionOfType(NotFoundException.class)
                 .isThrownBy(() -> eventService.updateEvent(eventId, userId,
-                        new EventUpdateRequest("x", null, null, null, null, null, null)))
+                        new EventUpdateRequest("x", null, null, null, null, null, null, null)))
                 .satisfies(ex -> assertThat(ex.getCode()).isEqualTo("EVENT_NOT_FOUND"));
 
         verifyNoInteractions(validator);
@@ -444,7 +444,7 @@ class EventServiceTests {
         UUID eventId = UUID.randomUUID();
         UUID userId = UUID.randomUUID();
         JEvents entity = eventEntity(eventId, true);
-        EventUpdateRequest request = new EventUpdateRequest(null, null, END, START, null, null, null);
+        EventUpdateRequest request = new EventUpdateRequest(null, null, END, START, null, null, null, null);
 
         when(events.findById(eventId)).thenReturn(Optional.of(entity));
         when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, userId, EventRole.CREATOR))

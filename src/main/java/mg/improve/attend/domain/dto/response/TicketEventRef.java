@@ -11,13 +11,15 @@ public record TicketEventRef(
         UUID id,
         String title,
         Instant startTime,
-        String location) {
+        String location,
+        String priceUnit) {
 
     public static TicketEventRef from(Events event) {
         return new TicketEventRef(
                 event.getId(),
                 event.getTitle(),
                 event.getStartTime(),
-                event.getLocation());
+                event.getLocation(),
+                event.getPriceUnit());
     }
 }

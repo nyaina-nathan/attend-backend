@@ -107,6 +107,7 @@ public class DashboardService {
                 event.getStartTime(),
                 event.getEndTime(),
                 event.getLocation(),
+                event.getPriceUnit(),
                 event.getStatus(),
                 row.getEventRole(),
                 totalCapacity,
