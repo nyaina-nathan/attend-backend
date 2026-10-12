@@ -49,6 +49,9 @@ public class JEvents {
     @Column(name = "location", length = 255)
     private String location;
 
+    @Column(name = "price_unit", length = 10)
+    private String priceUnit = "USD";
+
     @Enumerated(EnumType.STRING)
     @JdbcTypeCode(SqlTypes.NAMED_ENUM)
     @Column(name = "status", nullable = false, columnDefinition = "event_status")

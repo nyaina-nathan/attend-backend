@@ -23,6 +23,7 @@ public class Events {
     private Instant endTime;
     private boolean isPublic;
     private String location;
+    private String priceUnit;
     private EventStatus status;
     private Instant createdAt;
     private Instant updatedAt;
