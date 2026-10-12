@@ -14,5 +14,6 @@ public record EventUpdateRequest(
         Instant endTime,
         Boolean isPublic,
         String location,
+        String priceUnit,
         EventStatus status) {
 }

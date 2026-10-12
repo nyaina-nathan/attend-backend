@@ -71,7 +71,7 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Jazz Night", "desc", START, END, null, "Venue"), auth);
+                new EventCreateRequest("Jazz Night", "desc", START, END, null, "Venue", null), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.CREATED.value());
         EventDetail body = readBody(response, EventDetail.class);
@@ -79,6 +79,7 @@ class EventControllerIT extends IntegrationTestSupport {
         assertThat(body.isPublic()).isTrue();
         assertThat(body.status()).isEqualTo(EventStatus.OK);
         assertThat(body.myRole()).isEqualTo(EventRole.CREATOR);
+        assertThat(body.priceUnit()).isEqualTo("USD");
         assertThat(body.createdAt()).isNotNull();
 
         JEvents persisted = events.findAll().get(0);
@@ -93,7 +94,7 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Private", null, START, END, false, null), auth);
+                new EventCreateRequest("Private", null, START, END, false, null, null), auth);
 
         assertThat(readBody(response, EventDetail.class).isPublic()).isFalse();
     }
@@ -104,7 +105,7 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Bad", null, END, START, null, null), auth);
+                new EventCreateRequest("Bad", null, END, START, null, null, null), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
         ApiError error = readBody(response, ApiError.class);
@@ -114,9 +115,23 @@ class EventControllerIT extends IntegrationTestSupport {
     }
 
     @Test
+    void createEvent_rejectsTooLongPriceUnit() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
+                new EventCreateRequest("Jazz", null, START, END, null, null, "USDOLLARSXY"), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(readBody(response, ApiError.class).details())
+                .extracting(ErrorDetail::field).contains("priceUnit");
+        assertThat(events.count()).isZero();
+    }
+
+    @Test
     void createEvent_requiresAuthentication() {
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Jazz", null, START, END, null, null), new HttpHeaders());
+                new EventCreateRequest("Jazz", null, START, END, null, null, null), new HttpHeaders());
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
         assertThat(events.count()).isZero();
@@ -279,7 +294,7 @@ class EventControllerIT extends IntegrationTestSupport {
         JEvents event = seedEvent(owner, "Old Title", true);
 
         HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
-                new EventUpdateRequest("New Title", "updated", null, null, false, "New venue", EventStatus.POSTPONED),
+                new EventUpdateRequest("New Title", "updated", null, null, false, "New venue", "EUR", EventStatus.POSTPONED),
                 auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
@@ -287,6 +302,7 @@ class EventControllerIT extends IntegrationTestSupport {
         assertThat(body.title()).isEqualTo("New Title");
         assertThat(body.isPublic()).isFalse();
         assertThat(body.status()).isEqualTo(EventStatus.POSTPONED);
+        assertThat(body.priceUnit()).isEqualTo("EUR");
         assertThat(body.myRole()).isEqualTo(EventRole.CREATOR);
 
         JEvents persisted = events.findById(event.getId()).orElseThrow();
@@ -302,7 +318,7 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
-                new EventUpdateRequest("Nope", null, null, null, null, null, null), auth);
+                new EventUpdateRequest("Nope", null, null, null, null, null, null, null), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
         assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_THE_CREATOR");
@@ -316,7 +332,7 @@ class EventControllerIT extends IntegrationTestSupport {
         JEvents event = seedEvent(owner, "Event", true);
 
         HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
-                new EventUpdateRequest(null, null, END, START, null, null, null), auth);
+                new EventUpdateRequest(null, null, END, START, null, null, null, null), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
         assertThat(readBody(response, ApiError.class).details())
@@ -329,7 +345,7 @@ class EventControllerIT extends IntegrationTestSupport {
         JEvents event = seedEvent(owner, "Event", true);
 
         HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
-                new EventUpdateRequest("Nope", null, null, null, null, null, null), new HttpHeaders());
+                new EventUpdateRequest("Nope", null, null, null, null, null, null, null), new HttpHeaders());
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
     }
@@ -729,6 +745,7 @@ class EventControllerIT extends IntegrationTestSupport {
         assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
         EventStats body = readBody(response, EventStats.class);
         assertThat(body.eventId()).isEqualTo(event.getId());
+        assertThat(body.priceUnit()).isEqualTo("USD");
         assertThat(body.totalCapacity()).isEqualTo(110);
         assertThat(body.ticketsIssued()).isEqualTo(4);
         assertThat(body.ticketsCheckedIn()).isEqualTo(2);

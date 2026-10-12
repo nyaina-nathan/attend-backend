@@ -5,7 +5,8 @@ import java.time.Instant;
 /**
  * Body of {@code POST /api/events}. A plain data carrier: input validation lives in
  * {@code EventValidator}. {@code isPublic} is a nullable {@link Boolean} so an omitted value
- * defaults to {@code true} as documented.
+ * defaults to {@code true} as documented. {@code priceUnit} is a nullable currency/unit code;
+ * when omitted the event defaults to {@code USD}.
  */
 public record EventCreateRequest(
         String title,
@@ -13,5 +14,6 @@ public record EventCreateRequest(
         Instant startTime,
         Instant endTime,
         Boolean isPublic,
-        String location) {
+        String location,
+        String priceUnit) {
 }

@@ -11,6 +11,7 @@ import java.util.UUID;
  */
 public record EventStats(
         UUID eventId,
+        String priceUnit,
         int totalCapacity,
         long ticketsIssued,
         long ticketsCheckedIn,

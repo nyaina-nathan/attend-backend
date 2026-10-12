@@ -13,6 +13,7 @@ public record Tier(
         UUID eventId,
         String tierName,
         BigDecimal price,
+        String priceUnit,
         int capacity,
         int remaining) {
 
@@ -22,6 +23,7 @@ public record Tier(
                 tier.getEvent().getId(),
                 tier.getTierName(),
                 tier.getPrice(),
+                tier.getEvent().getPriceUnit(),
                 tier.getCapacity(),
                 remaining);
     }

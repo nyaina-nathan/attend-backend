@@ -16,6 +16,7 @@ public record NextOrganizingEvent(
         Instant startTime,
         Instant endTime,
         String location,
+        String priceUnit,
         EventStatus status,
         EventRole myRole,
         int totalCapacity,

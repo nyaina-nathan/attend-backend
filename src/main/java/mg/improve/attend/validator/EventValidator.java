@@ -22,6 +22,7 @@ public class EventValidator {
 
     private static final int TITLE_MAX = 255;
     private static final int LOCATION_MAX = 255;
+    private static final int PRICE_UNIT_MAX = 10;
     private static final int SIZE_MIN = 1;
     private static final int SIZE_MAX = 100;
     private static final String DEFAULT_SORT_FIELD = "startTime";
@@ -34,6 +35,7 @@ public class EventValidator {
         validateStartTime(request.startTime(), details);
         validateEndTime(request.startTime(), request.endTime(), details);
         validateLocation(request.location(), details);
+        validatePriceUnit(request.priceUnit(), details);
 
         if (!details.isEmpty()) {
             throw new BadRequestException("VALIDATION_ERROR", "Validation failed", details);
@@ -69,6 +71,21 @@ public class EventValidator {
     }
 
     /**
+     * A price unit is an optional, free-form currency/code. Blank values are rejected; unknown
+     * units are accepted, only the stored column width is enforced.
+     */
+    private void validatePriceUnit(String priceUnit, List<ErrorDetail> details) {
+        if (priceUnit == null) {
+            return;
+        }
+        if (priceUnit.isBlank()) {
+            details.add(new ErrorDetail("priceUnit", "must not be blank"));
+        } else if (priceUnit.length() > PRICE_UNIT_MAX) {
+            details.add(new ErrorDetail("priceUnit", "must be at most " + PRICE_UNIT_MAX + " characters"));
+        }
+    }
+
+    /**
      * Validates a partial {@link EventUpdateRequest}. Only present fields are checked; the
      * time range is validated against the event's current values when one side is omitted.
      */
@@ -80,6 +97,9 @@ public class EventValidator {
         }
         if (request.location() != null) {
             validateLocation(request.location(), details);
+        }
+        if (request.priceUnit() != null) {
+            validatePriceUnit(request.priceUnit(), details);
         }
 
         Instant startTime = request.startTime() != null ? request.startTime() : existingStartTime;
