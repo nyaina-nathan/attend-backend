@@ -568,6 +568,16 @@ Response `201`:
 ```
 Errors: `404`, `409` (`SOLD_OUT`, `EVENT_NOT_OPEN` when the event is cancelled or ended).
 
+### GET `/tiers/{tierId}/check` 🔒
+Reports whether the authenticated caller already holds a ticket in this tier. Counts the
+capacity-consuming statuses (`VALID`, `USED`), so cancelled and refunded tickets do not count.
+
+Response `200`:
+```json
+{ "isPresent": true }
+```
+Errors: `404` (unknown tier).
+
 ### GET `/tickets/me` 🔒
 Caller's tickets.
 
@@ -757,6 +767,7 @@ Response `204`. Errors: `403` (not the sender), `404`.
 | POST | `/events/{eventId}/tiers` | 🔒 | organizer |
 | PATCH / DELETE | `/tiers/{tierId}` | 🔒 | organizer |
 | POST | `/tiers/{tierId}/tickets` | 🔒 | user |
+| GET | `/tiers/{tierId}/check` | 🔒 | user |
 | GET | `/tickets/me` | 🔒 | user |
 | GET | `/tickets/{ticketId}` | 🔒 | owner / organizer |
 | POST | `/tickets/{ticketId}/check-in` | 🔒 | organizer |

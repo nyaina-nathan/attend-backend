@@ -98,6 +98,7 @@ changing an endpoint.
 | POST | `/events/{eventId}/tiers` | organizer |
 | PATCH / DELETE | `/tiers/{tierId}` | organizer |
 | POST | `/tiers/{tierId}/tickets` | user |
+| GET | `/tiers/{tierId}/check` | 🔒 |
 | GET | `/tickets/me`, `/tickets/{ticketId}` | 🔒 |
 | POST | `/tickets/{ticketId}/check-in`, `/refund` | organizer |
 | POST | `/tickets/{ticketId}/cancel` | owner |
