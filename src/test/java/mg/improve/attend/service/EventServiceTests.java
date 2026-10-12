@@ -41,6 +41,7 @@ import mg.improve.attend.exceptions.UnauthorizedException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventPaymentMethodRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.JUsersRepository;
@@ -84,6 +85,9 @@ class EventServiceTests {
 
     @Mock
     private JTicketRepository tickets;
+
+    @Mock
+    private JTicketOrderRepository orders;
 
     @Mock
     private JUsersRepository users;
@@ -525,7 +529,8 @@ class EventServiceTests {
 
         eventService.deleteEvent(eventId, userId);
 
-        InOrder inOrder = inOrder(organizers, paymentMethods, tiers, events);
+        InOrder inOrder = inOrder(orders, organizers, paymentMethods, tiers, events);
+        inOrder.verify(orders).deleteByEventId(eventId);
         inOrder.verify(organizers).deleteByEventId(eventId);
         inOrder.verify(paymentMethods).deleteByEventId(eventId);
         inOrder.verify(tiers).deleteByEventId(eventId);

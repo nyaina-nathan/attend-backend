@@ -21,12 +21,14 @@ import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.PaymentType;
 import mg.improve.attend.domain.mapper.EventPaymentMethodMapper;
 import mg.improve.attend.exceptions.BadRequestException;
+import mg.improve.attend.exceptions.ConflictException;
 import mg.improve.attend.exceptions.ForbiddenException;
 import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.exceptions.UnauthorizedException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventPaymentMethodRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderRepository;
 import mg.improve.attend.repository.entities.JEventPaymentMethod;
 import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.validator.PaymentMethodValidator;
@@ -49,6 +51,9 @@ class EventPaymentMethodServiceTests {
 
     @Mock
     private JEventPaymentMethodRepository paymentMethods;
+
+    @Mock
+    private JTicketOrderRepository ticketOrders;
 
     @Mock
     private EventPaymentMethodMapper paymentMethodMapper;
@@ -498,6 +503,29 @@ class EventPaymentMethodServiceTests {
         paymentMethodService.deletePaymentMethod(methodId, userId);
 
         verify(paymentMethods).delete(method);
+    }
+
+    @Test
+    void deletePaymentMethod_rejectsWhenOrdersExist() {
+        UUID eventId = UUID.randomUUID();
+        UUID methodId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        JEvents event = eventEntity(eventId, true);
+        JEventPaymentMethod method = methodEntity(methodId, event, true);
+
+        when(paymentMethods.findById(methodId)).thenReturn(Optional.of(method));
+        when(organizers.existsByEvent_IdAndUser_IdAndEventRole(eventId, userId, EventRole.CREATOR))
+                .thenReturn(true);
+        when(ticketOrders.existsByPaymentMethod_Id(methodId)).thenReturn(true);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> paymentMethodService.deletePaymentMethod(methodId, userId))
+                .satisfies(ex -> {
+                    assertThat(ex.getCode()).isEqualTo("PAYMENT_METHOD_IN_USE");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+
+        verify(paymentMethods, never()).delete(any());
     }
 
     @Test

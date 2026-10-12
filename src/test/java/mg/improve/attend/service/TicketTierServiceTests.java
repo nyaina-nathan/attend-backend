@@ -27,6 +27,7 @@ import mg.improve.attend.exceptions.NotFoundException;
 import mg.improve.attend.exceptions.UnauthorizedException;
 import mg.improve.attend.repository.JEventOrganizerRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderItemRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.entities.JEvents;
@@ -57,6 +58,9 @@ class TicketTierServiceTests {
 
     @Mock
     private JTicketRepository tickets;
+
+    @Mock
+    private JTicketOrderItemRepository ticketOrderItems;
 
     @Mock
     private TicketTierMapper tierMapper;
@@ -451,6 +455,28 @@ class TicketTierServiceTests {
                 .isThrownBy(() -> tierService.deleteTier(tierId, userId))
                 .satisfies(ex -> {
                     assertThat(ex.getCode()).isEqualTo("TIER_HAS_TICKETS");
+                    assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
+                });
+
+        verify(tiers, never()).delete(any());
+    }
+
+    @Test
+    void deleteTier_rejectsWhenOrdersExist() {
+        UUID eventId = UUID.randomUUID();
+        UUID tierId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        JTicketTier entity = tierEntity(tierId, eventEntity(eventId, true), "VIP", "40.00", 10);
+
+        when(tiers.findById(tierId)).thenReturn(Optional.of(entity));
+        when(organizers.existsByEvent_IdAndUser_Id(eventId, userId)).thenReturn(true);
+        when(tickets.existsByTier_Id(tierId)).thenReturn(false);
+        when(ticketOrderItems.existsByTier_Id(tierId)).thenReturn(true);
+
+        assertThatExceptionOfType(ConflictException.class)
+                .isThrownBy(() -> tierService.deleteTier(tierId, userId))
+                .satisfies(ex -> {
+                    assertThat(ex.getCode()).isEqualTo("TIER_IN_USE");
                     assertThat(ex.getStatus()).isEqualTo(HttpStatus.CONFLICT);
                 });
 
