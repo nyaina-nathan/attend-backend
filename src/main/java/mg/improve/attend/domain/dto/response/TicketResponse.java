@@ -17,6 +17,7 @@ public record TicketResponse(
         TicketTierRef tier,
         BigDecimal pricePaid,
         TicketStatus ticketStatus,
+        UUID orderId,
         Instant checkedInAt,
         Instant validUntil,
         Instant createdAt) {
@@ -28,6 +29,7 @@ public record TicketResponse(
                 TicketTierRef.from(ticket.getTier()),
                 ticket.getPricePaid(),
                 ticket.getTicketStatus(),
+                ticket.getOrderId(),
                 ticket.getCheckedInAt(),
                 ticket.getValidUntil(),
                 ticket.getCreatedAt());

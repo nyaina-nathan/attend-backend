@@ -46,6 +46,10 @@ public class JTicket {
     @JoinColumn(name = "id_tier", nullable = false)
     private JTicketTier tier;
 
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "id_order")
+    private JTicketOrder order;
+
     @Column(name = "price_paid", nullable = false, precision = 10, scale = 2)
     private BigDecimal pricePaid;
 

@@ -23,6 +23,7 @@ public class Ticket {
     private TicketTier tier;
     private BigDecimal pricePaid;
     private TicketStatus ticketStatus;
+    private UUID orderId;
     private Instant checkedInAt;
     private Instant createdAt;
     private Instant validUntil;
