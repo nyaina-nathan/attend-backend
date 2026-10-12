@@ -71,7 +71,7 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Jazz Night", "desc", START, END, null, "Venue", null), auth);
+                new EventCreateRequest("Jazz Night", "desc", START, END, null, "Venue", null, null, null), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.CREATED.value());
         EventDetail body = readBody(response, EventDetail.class);
@@ -89,12 +89,61 @@ class EventControllerIT extends IntegrationTestSupport {
     }
 
     @Test
+    void createEvent_persistsCoordinates() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
+                new EventCreateRequest("Jazz Night", "desc", START, END, null, "Venue",
+                        new BigDecimal("-18.879200"), new BigDecimal("47.507900"), null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.CREATED.value());
+        EventDetail body = readBody(response, EventDetail.class);
+        assertThat(body.latitude()).isEqualByComparingTo(new BigDecimal("-18.879200"));
+        assertThat(body.longitude()).isEqualByComparingTo(new BigDecimal("47.507900"));
+
+        JEvents persisted = events.findAll().get(0);
+        assertThat(persisted.getLatitude()).isEqualByComparingTo(new BigDecimal("-18.879200"));
+        assertThat(persisted.getLongitude()).isEqualByComparingTo(new BigDecimal("47.507900"));
+    }
+
+    @Test
+    void createEvent_rejectsOneSidedCoordinates() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
+                new EventCreateRequest("Jazz", null, START, END, null, "Venue",
+                        new BigDecimal("-18.879200"), null, null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(readBody(response, ApiError.class).details())
+                .extracting(ErrorDetail::field).contains("longitude");
+        assertThat(events.count()).isZero();
+    }
+
+    @Test
+    void createEvent_rejectsOutOfRangeCoordinates() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+
+        HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
+                new EventCreateRequest("Jazz", null, START, END, null, "Venue",
+                        new BigDecimal("123.000000"), new BigDecimal("47.507900"), null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
+        assertThat(readBody(response, ApiError.class).details())
+                .extracting(ErrorDetail::field).contains("latitude");
+        assertThat(events.count()).isZero();
+    }
+
+    @Test
     void createEvent_honorsExplicitIsPublicFalse() {
         HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Private", null, START, END, false, null, null), auth);
+                new EventCreateRequest("Private", null, START, END, false, null, null, null, null), auth);
 
         assertThat(readBody(response, EventDetail.class).isPublic()).isFalse();
     }
@@ -105,7 +154,7 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Bad", null, END, START, null, null, null), auth);
+                new EventCreateRequest("Bad", null, END, START, null, null, null, null, null), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
         ApiError error = readBody(response, ApiError.class);
@@ -120,7 +169,7 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Jazz", null, START, END, null, null, "USDOLLARSXY"), auth);
+                new EventCreateRequest("Jazz", null, START, END, null, null, null, null, "USDOLLARSXY"), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
         assertThat(readBody(response, ApiError.class).details())
@@ -131,7 +180,7 @@ class EventControllerIT extends IntegrationTestSupport {
     @Test
     void createEvent_requiresAuthentication() {
         HttpResponse<String> response = call(HttpMethod.POST, "/api/events",
-                new EventCreateRequest("Jazz", null, START, END, null, null, null), new HttpHeaders());
+                new EventCreateRequest("Jazz", null, START, END, null, null, null, null, null), new HttpHeaders());
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
         assertThat(events.count()).isZero();
@@ -294,7 +343,7 @@ class EventControllerIT extends IntegrationTestSupport {
         JEvents event = seedEvent(owner, "Old Title", true);
 
         HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
-                new EventUpdateRequest("New Title", "updated", null, null, false, "New venue", "EUR", EventStatus.POSTPONED),
+                new EventUpdateRequest("New Title", "updated", null, null, false, "New venue", null, null, "EUR", EventStatus.POSTPONED),
                 auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
@@ -311,6 +360,27 @@ class EventControllerIT extends IntegrationTestSupport {
     }
 
     @Test
+    void patchEvent_updatesCoordinates() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Old Title", true);
+
+        HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
+                new EventUpdateRequest(null, null, null, null, null, null,
+                        new BigDecimal("-18.900000"), new BigDecimal("47.500000"), null, null), auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        EventDetail body = readBody(response, EventDetail.class);
+        assertThat(body.latitude()).isEqualByComparingTo(new BigDecimal("-18.900000"));
+        assertThat(body.longitude()).isEqualByComparingTo(new BigDecimal("47.500000"));
+
+        JEvents persisted = events.findById(event.getId()).orElseThrow();
+        assertThat(persisted.getLatitude()).isEqualByComparingTo(new BigDecimal("-18.900000"));
+        assertThat(persisted.getLongitude()).isEqualByComparingTo(new BigDecimal("47.500000"));
+    }
+
+    @Test
     void patchEvent_rejectsNonCreator() {
         JUsers owner = seedUser("owner@example.com", "owner", "secret123");
         JEvents event = seedEvent(owner, "Old Title", true);
@@ -318,7 +388,7 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
 
         HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
-                new EventUpdateRequest("Nope", null, null, null, null, null, null, null), auth);
+                new EventUpdateRequest("Nope", null, null, null, null, null, null, null, null, null), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.FORBIDDEN.value());
         assertThat(readBody(response, ApiError.class).error()).isEqualTo("NOT_THE_CREATOR");
@@ -332,7 +402,7 @@ class EventControllerIT extends IntegrationTestSupport {
         JEvents event = seedEvent(owner, "Event", true);
 
         HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
-                new EventUpdateRequest(null, null, END, START, null, null, null, null), auth);
+                new EventUpdateRequest(null, null, END, START, null, null, null, null, null, null), auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.BAD_REQUEST.value());
         assertThat(readBody(response, ApiError.class).details())
@@ -345,7 +415,7 @@ class EventControllerIT extends IntegrationTestSupport {
         JEvents event = seedEvent(owner, "Event", true);
 
         HttpResponse<String> response = call(HttpMethod.PATCH, "/api/events/" + event.getId(),
-                new EventUpdateRequest("Nope", null, null, null, null, null, null, null), new HttpHeaders());
+                new EventUpdateRequest("Nope", null, null, null, null, null, null, null, null, null), new HttpHeaders());
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.UNAUTHORIZED.value());
     }
