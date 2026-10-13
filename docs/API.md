@@ -287,6 +287,13 @@ Response `200`:
         "tierId": "a1b2c3d4-0000-4000-8000-000000000001",
         "tierName": "VIP",
         "remaining": 3
+      },
+      {
+        "type": "PENDING_ORDERS",
+        "eventId": "5e0c2a38-3f1b-4f6a-9b0e-7c1d2e3f4a5b",
+        "eventTitle": "Tana Jazz Night",
+        "startTime": "2026-11-20T18:00:00Z",
+        "pendingOrders": 2
       }
     ]
   },
@@ -325,6 +332,7 @@ Fields:
   | `NO_TIERS` | Upcoming `OK` event starting within 7 days with no tiers | none |
   | `LOW_STOCK` | A tier of an upcoming `OK` event with `remaining <= 10` and `remaining > 0` | `tierId`, `tierName`, `remaining` |
   | `POSTPONED` | `POSTPONED` event that still has counted tickets | `ticketsIssued` |
+  | `PENDING_ORDERS` | Event the caller organizes that still has at least one `PENDING` order (any status or start time) | `pendingOrders` |
 
   Items always include `eventId`, `eventTitle` and `startTime`. Clients should ignore unknown
   `type` values so new rules can be added later.

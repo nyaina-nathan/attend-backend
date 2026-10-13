@@ -18,6 +18,7 @@ import mg.improve.attend.domain.dto.response.TicketEventRef;
 import mg.improve.attend.domain.dto.response.TicketTierRef;
 import mg.improve.attend.domain.entity.TicketTier;
 import mg.improve.attend.domain.enums.EventStatus;
+import mg.improve.attend.domain.enums.OrderStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.TicketTierMapper;
 import mg.improve.attend.repository.JEventsRepository;
@@ -140,6 +141,12 @@ public class DashboardService {
                 userId, EventStatus.POSTPONED, COUNTED_STATUSES)) {
             items.add(AttentionItem.postponed(row.getEventId(), row.getEventTitle(),
                     row.getStartTime(), row.getTicketsIssued()));
+        }
+
+        for (JEventsRepository.PendingOrdersAttentionRow row : events.findPendingOrderAttention(
+                userId, OrderStatus.PENDING)) {
+            items.add(AttentionItem.pendingOrders(row.getEventId(), row.getEventTitle(),
+                    row.getStartTime(), row.getPendingOrders()));
         }
 
         return items.stream()

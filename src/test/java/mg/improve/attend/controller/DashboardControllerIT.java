@@ -13,14 +13,20 @@ import mg.improve.attend.domain.dto.response.AttentionType;
 import mg.improve.attend.domain.dto.response.DashboardResponse;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
+import mg.improve.attend.domain.enums.OrderStatus;
+import mg.improve.attend.domain.enums.PaymentType;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.repository.JEventOrganizerRepository;
+import mg.improve.attend.repository.JEventPaymentMethodRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.entities.JEventOrganizer;
+import mg.improve.attend.repository.entities.JEventPaymentMethod;
 import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.repository.entities.JTicket;
+import mg.improve.attend.repository.entities.JTicketOrder;
 import mg.improve.attend.repository.entities.JTicketTier;
 import mg.improve.attend.repository.entities.JUsers;
 import org.junit.jupiter.api.Test;
@@ -46,6 +52,12 @@ class DashboardControllerIT extends IntegrationTestSupport {
 
     @Autowired
     private JTicketRepository tickets;
+
+    @Autowired
+    private JTicketOrderRepository orders;
+
+    @Autowired
+    private JEventPaymentMethodRepository paymentMethods;
 
     @Test
     void getDashboard_requiresAuthentication() {
@@ -96,6 +108,9 @@ class DashboardControllerIT extends IntegrationTestSupport {
             seedTicket(buyer, vip, new BigDecimal("40.00"),
                     i < 3 ? TicketStatus.USED : TicketStatus.VALID);
         }
+        JEventPaymentMethod method = seedPaymentMethod(organized);
+        seedPendingOrder(organized, buyer, method);
+        seedPendingOrder(organized, buyer, method);
 
         // Attending event: upcoming OK, not organized by the caller; the caller holds a VALID ticket.
         JEvents attending = seedEvent("Antsirabe Food Fair", now.plus(Duration.ofDays(5)), EventStatus.OK);
@@ -118,13 +133,20 @@ class DashboardControllerIT extends IntegrationTestSupport {
         assertThat(body.organizing().nextEvent().ticketsIssued()).isEqualTo(10);
         assertThat(body.organizing().nextEvent().ticketsCheckedIn()).isEqualTo(3);
 
-        assertThat(body.organizing().attention()).hasSize(1);
+        assertThat(body.organizing().attention()).hasSize(2);
         AttentionItem item = body.organizing().attention().get(0);
         assertThat(item.type()).isEqualTo(AttentionType.LOW_STOCK);
         assertThat(item.eventId()).isEqualTo(organized.getId());
         assertThat(item.tierName()).isEqualTo("VIP");
         assertThat(item.remaining()).isEqualTo(3);
         assertThat(item.ticketsIssued()).isNull();
+        assertThat(item.pendingOrders()).isNull();
+
+        AttentionItem pending = body.organizing().attention().get(1);
+        assertThat(pending.type()).isEqualTo(AttentionType.PENDING_ORDERS);
+        assertThat(pending.eventId()).isEqualTo(organized.getId());
+        assertThat(pending.pendingOrders()).isEqualTo(2);
+        assertThat(pending.tierId()).isNull();
 
         assertThat(body.attending().ticketsUpcoming()).isEqualTo(1);
         assertThat(body.attending().nextTicket()).isNotNull();
@@ -173,5 +195,26 @@ class DashboardControllerIT extends IntegrationTestSupport {
         ticket.setTicketStatus(status);
         ticket.setValidUntil(tier.getEvent().getEndTime());
         tickets.saveAndFlush(ticket);
+    }
+
+    private JEventPaymentMethod seedPaymentMethod(JEvents event) {
+        JEventPaymentMethod method = new JEventPaymentMethod();
+        method.setEvent(event);
+        method.setPaymentType(PaymentType.MOBILE_MONEY);
+        method.setProviderName("M-Pesa");
+        method.setAccountName("Jane Doe");
+        method.setAccountIdentifier("+261340000000");
+        method.setActive(true);
+        return paymentMethods.saveAndFlush(method);
+    }
+
+    private void seedPendingOrder(JEvents event, JUsers owner, JEventPaymentMethod method) {
+        JTicketOrder order = new JTicketOrder();
+        order.setOwner(owner);
+        order.setEvent(event);
+        order.setPaymentMethod(method);
+        order.setPriceUnit("USD");
+        order.setOrderStatus(OrderStatus.PENDING);
+        orders.saveAndFlush(order);
     }
 }

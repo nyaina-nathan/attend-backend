@@ -1991,14 +1991,15 @@ components:
       description: |
         Rule that produced an attention item. Clients should ignore unknown values so
         new rules can be added later.
-      enum: [NO_TIERS, LOW_STOCK, POSTPONED]
+      enum: [NO_TIERS, LOW_STOCK, POSTPONED, PENDING_ORDERS]
 
     AttentionItem:
       type: object
       required: [type, eventId, eventTitle, startTime]
       description: |
         One entry of `organizing.attention`. `tierId`/`tierName`/`remaining` are only
-        present for `LOW_STOCK`; `ticketsIssued` only for `POSTPONED`.
+        present for `LOW_STOCK`; `ticketsIssued` only for `POSTPONED`; `pendingOrders`
+        only for `PENDING_ORDERS`.
       properties:
         type:
           $ref: '#/components/schemas/AttentionType'
@@ -2021,6 +2022,10 @@ components:
         ticketsIssued:
           type: integer
           minimum: 0
+        pendingOrders:
+          type: integer
+          minimum: 1
+          description: Number of `PENDING` orders awaiting review on the event.
 
     NextOrganizingEvent:
       type: object

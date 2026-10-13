@@ -7,5 +7,6 @@ package mg.improve.attend.domain.dto.response;
 public enum AttentionType {
     NO_TIERS,
     LOW_STOCK,
-    POSTPONED
+    POSTPONED,
+    PENDING_ORDERS
 }
