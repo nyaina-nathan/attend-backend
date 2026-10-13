@@ -1,6 +1,7 @@
 package mg.improve.attend.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.tuple;
 
 import java.math.BigDecimal;
 import java.net.http.HttpResponse;
@@ -21,16 +22,22 @@ import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.dto.response.TierStats;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
+import mg.improve.attend.domain.enums.OrderStatus;
+import mg.improve.attend.domain.enums.PaymentType;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.exceptions.ApiError;
 import mg.improve.attend.exceptions.ErrorDetail;
 import mg.improve.attend.repository.JEventOrganizerRepository;
+import mg.improve.attend.repository.JEventPaymentMethodRepository;
 import mg.improve.attend.repository.JEventsRepository;
+import mg.improve.attend.repository.JTicketOrderRepository;
 import mg.improve.attend.repository.JTicketRepository;
 import mg.improve.attend.repository.JTicketTierRepository;
 import mg.improve.attend.repository.entities.JEventOrganizer;
+import mg.improve.attend.repository.entities.JEventPaymentMethod;
 import mg.improve.attend.repository.entities.JEvents;
 import mg.improve.attend.repository.entities.JTicket;
+import mg.improve.attend.repository.entities.JTicketOrder;
 import mg.improve.attend.repository.entities.JTicketTier;
 import mg.improve.attend.repository.entities.JUsers;
 import org.junit.jupiter.api.Test;
@@ -59,6 +66,12 @@ class EventControllerIT extends IntegrationTestSupport {
 
     @Autowired
     private JTicketRepository tickets;
+
+    @Autowired
+    private JTicketOrderRepository orders;
+
+    @Autowired
+    private JEventPaymentMethodRepository paymentMethods;
 
     // ------------------------------------------------------------------
     // POST /api/events
@@ -245,6 +258,30 @@ class EventControllerIT extends IntegrationTestSupport {
     }
 
     @Test
+    void listEvents_setsOrderPendingForOrganizerEventsOnly() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JUsers other = seedUser("other@example.com", "other", "secret123");
+
+        JEvents withPending = seedEvent(owner, "With Pending", true);
+        JEventPaymentMethod method = seedPaymentMethod(withPending);
+        seedPendingOrder(withPending, owner, method);
+        seedEvent(owner, "No Pending", true);
+        seedEvent(other, "Not Mine", true);
+
+        PageEventSummary page = readBody(
+                call(HttpMethod.GET, "/api/events", null, auth), PageEventSummary.class);
+
+        assertThat(page.content())
+                .extracting(EventSummary::title, EventSummary::isOrderPending)
+                .containsExactlyInAnyOrder(
+                        tuple("With Pending", true),
+                        tuple("No Pending", false),
+                        tuple("Not Mine", null));
+    }
+
+    @Test
     void listEvents_ignoresIsPublicWithoutMineAndFallsBackForAnonymous() {
         JUsers owner = seedUser("owner@example.com", "owner", "secret123");
         seedEvent(owner, "Public Only", true);
@@ -286,6 +323,7 @@ class EventControllerIT extends IntegrationTestSupport {
         assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
         EventDetail body = readBody(response, EventDetail.class);
         assertThat(body.myRole()).isNull();
+        assertThat(body.isOrderPending()).isNull();
         assertThat(body.tiers()).hasSize(1);
         assertThat(body.tiers().get(0).remaining()).isEqualTo(7);
     }
@@ -322,7 +360,24 @@ class EventControllerIT extends IntegrationTestSupport {
         HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId(), null, auth);
 
         assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
-        assertThat(readBody(response, EventDetail.class).myRole()).isEqualTo(EventRole.CREATOR);
+        EventDetail body = readBody(response, EventDetail.class);
+        assertThat(body.myRole()).isEqualTo(EventRole.CREATOR);
+        assertThat(body.isOrderPending()).isFalse();
+    }
+
+    @Test
+    void getEvent_setsOrderPendingForOrganizerWithPendingOrder() {
+        HttpResponse<String> registered = register("owner@example.com", "secret123", "Owner", "owner");
+        JUsers owner = users.findByEmail("owner@example.com").orElseThrow();
+        HttpHeaders auth = withCookies(new HttpHeaders(), ACCESS_COOKIE, accessToken(registered));
+        JEvents event = seedEvent(owner, "Event", true);
+        JEventPaymentMethod method = seedPaymentMethod(event);
+        seedPendingOrder(event, owner, method);
+
+        HttpResponse<String> response = call(HttpMethod.GET, "/api/events/" + event.getId(), null, auth);
+
+        assertThat(response.statusCode()).isEqualTo(HttpStatus.OK.value());
+        assertThat(readBody(response, EventDetail.class).isOrderPending()).isTrue();
     }
 
     @Test
@@ -962,5 +1017,26 @@ class EventControllerIT extends IntegrationTestSupport {
         ticket.setPricePaid(tier.getPrice());
         ticket.setTicketStatus(status);
         tickets.saveAndFlush(ticket);
+    }
+
+    private JEventPaymentMethod seedPaymentMethod(JEvents event) {
+        JEventPaymentMethod method = new JEventPaymentMethod();
+        method.setEvent(event);
+        method.setPaymentType(PaymentType.MOBILE_MONEY);
+        method.setProviderName("M-Pesa");
+        method.setAccountName("Jane Doe");
+        method.setAccountIdentifier("+261340000000");
+        method.setActive(true);
+        return paymentMethods.saveAndFlush(method);
+    }
+
+    private void seedPendingOrder(JEvents event, JUsers owner, JEventPaymentMethod method) {
+        JTicketOrder order = new JTicketOrder();
+        order.setOwner(owner);
+        order.setEvent(event);
+        order.setPaymentMethod(method);
+        order.setPriceUnit("USD");
+        order.setOrderStatus(OrderStatus.PENDING);
+        orders.saveAndFlush(order);
     }
 }

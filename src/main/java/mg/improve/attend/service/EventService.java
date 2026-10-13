@@ -7,9 +7,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +29,7 @@ import mg.improve.attend.domain.dto.response.TierSummary;
 import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
+import mg.improve.attend.domain.enums.OrderStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.EventOrganizerMapper;
 import mg.improve.attend.domain.mapper.EventsMapper;
@@ -137,7 +141,10 @@ public class EventService {
             }
         }
 
-        return EventDetail.from(eventsMapper.toDomain(event), myRole, tiersFor(eventId));
+        Boolean isOrderPending = myRole == null ? null
+                : orders.existsByEvent_IdAndOrderStatus(eventId, OrderStatus.PENDING);
+
+        return EventDetail.from(eventsMapper.toDomain(event), myRole, tiersFor(eventId), isOrderPending);
     }
 
     private List<TierSummary> tiersFor(UUID eventId) {
@@ -381,8 +388,10 @@ public class EventService {
 
         Page<JEvents> eventsPage = events.findAll(filter(q, from, to, status, isMine, isPublic, userId), pageable);
         Map<UUID, BigDecimal> minPrices = minPricesByEvent(eventsPage.getContent());
+        Map<UUID, Boolean> orderPending = orderPendingByEvent(eventsPage.getContent(), userId);
         List<EventSummary> content = eventsPage.getContent().stream()
-                .map(entity -> EventSummary.from(eventsMapper.toDomain(entity), minPrices.get(entity.getId())))
+                .map(entity -> EventSummary.from(eventsMapper.toDomain(entity), minPrices.get(entity.getId()),
+                        orderPending.get(entity.getId())))
                 .toList();
 
         return new PageEventSummary(
@@ -426,6 +435,28 @@ public class EventService {
             }
             return cb.and(predicates.toArray(new Predicate[0]));
         };
+    }
+
+    /**
+     * The organizer-only {@code isOrderPending} flag per event in the page: {@code true}/
+     * {@code false} when the caller organizes the event, absent (so {@code null}) otherwise.
+     * Anonymous callers and empty pages need no queries.
+     */
+    private Map<UUID, Boolean> orderPendingByEvent(List<JEvents> content, UUID userId) {
+        if (content.isEmpty() || userId == null) {
+            return Map.of();
+        }
+        List<UUID> eventIds = content.stream().map(JEvents::getId).toList();
+        Set<UUID> organized = new HashSet<>(organizers.findEventIdsByUserAndEventIds(userId, eventIds));
+        if (organized.isEmpty()) {
+            return Map.of();
+        }
+        Set<UUID> pending = new HashSet<>(orders.findEventIdsByEventIdsAndOrderStatus(eventIds, OrderStatus.PENDING));
+        Map<UUID, Boolean> result = new HashMap<>();
+        for (UUID eventId : organized) {
+            result.put(eventId, pending.contains(eventId));
+        }
+        return result;
     }
 
     private Map<UUID, BigDecimal> minPricesByEvent(List<JEvents> content) {

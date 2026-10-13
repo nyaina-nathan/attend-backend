@@ -21,6 +21,7 @@ import mg.improve.attend.domain.dto.request.EventCreateRequest;
 import mg.improve.attend.domain.dto.request.EventUpdateRequest;
 import mg.improve.attend.domain.dto.response.EventDetail;
 import mg.improve.attend.domain.dto.response.EventStats;
+import mg.improve.attend.domain.dto.response.EventSummary;
 import mg.improve.attend.domain.dto.response.Organizer;
 import mg.improve.attend.domain.dto.response.PageEventSummary;
 import mg.improve.attend.domain.dto.response.TierStats;
@@ -30,6 +31,7 @@ import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.entity.Users;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
+import mg.improve.attend.domain.enums.OrderStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.EventOrganizerMapper;
 import mg.improve.attend.domain.mapper.EventsMapper;
@@ -337,6 +339,41 @@ class EventServiceTests {
         assertThat(response.tiers()).extracting(TierSummary::remaining).containsExactly(7, 5, 0);
     }
 
+    @Test
+    void getEvent_setsOrderPendingForOrganizer() {
+        UUID eventId = UUID.randomUUID();
+        UUID userId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+        Events domain = eventDomain(eventId, true);
+        JEventOrganizer organizer = organizerEntity(userEntity(userId), entity, EventRole.CREATOR);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(organizers.findByEvent_IdAndUser_Id(eventId, userId)).thenReturn(Optional.of(organizer));
+        when(tiers.findByEvent_Id(eventId)).thenReturn(List.of());
+        when(eventsMapper.toDomain(entity)).thenReturn(domain);
+        when(orders.existsByEvent_IdAndOrderStatus(eventId, OrderStatus.PENDING)).thenReturn(true);
+
+        EventDetail response = eventService.getEvent(eventId, userId);
+
+        assertThat(response.myRole()).isEqualTo(EventRole.CREATOR);
+        assertThat(response.isOrderPending()).isTrue();
+    }
+
+    @Test
+    void getEvent_leavesOrderPendingNullForAnonymous() {
+        UUID eventId = UUID.randomUUID();
+        JEvents entity = eventEntity(eventId, true);
+
+        when(events.findById(eventId)).thenReturn(Optional.of(entity));
+        when(tiers.findByEvent_Id(eventId)).thenReturn(List.of());
+        when(eventsMapper.toDomain(entity)).thenReturn(eventDomain(eventId, true));
+
+        EventDetail response = eventService.getEvent(eventId, null);
+
+        assertThat(response.isOrderPending()).isNull();
+        verify(orders, never()).existsByEvent_IdAndOrderStatus(any(), any());
+    }
+
     // ------------------------------------------------------------------
     // listEvents
     // ------------------------------------------------------------------
@@ -379,6 +416,36 @@ class EventServiceTests {
                 false, null, null, 0, 20, "startTime,asc");
 
         assertThat(response.content().get(0).minPrice()).isNull();
+    }
+
+    @Test
+    void listEvents_setsOrderPendingPerOrganizerEvent() {
+        UUID userId = UUID.randomUUID();
+        UUID mineId = UUID.randomUUID();
+        UUID organizedNoPendingId = UUID.randomUUID();
+        UUID otherId = UUID.randomUUID();
+        JEvents mine = eventEntity(mineId, true);
+        JEvents organizedNoPending = eventEntity(organizedNoPendingId, true);
+        JEvents other = eventEntity(otherId, true);
+        List<UUID> eventIds = List.of(mineId, organizedNoPendingId, otherId);
+        Page<JEvents> page = new PageImpl<>(List.of(mine, organizedNoPending, other));
+
+        when(validator.validateListQuery(0, 20, "startTime,asc")).thenReturn(Sort.by("startTime"));
+        when(events.findAll(ArgumentMatchers.<Specification<JEvents>>any(), any(Pageable.class))).thenReturn(page);
+        when(tiers.findMinPriceByEventIds(eventIds)).thenReturn(List.of());
+        when(organizers.findEventIdsByUserAndEventIds(userId, eventIds))
+                .thenReturn(List.of(mineId, organizedNoPendingId));
+        when(orders.findEventIdsByEventIdsAndOrderStatus(eventIds, OrderStatus.PENDING))
+                .thenReturn(List.of(mineId));
+        when(eventsMapper.toDomain(mine)).thenReturn(eventDomain(mineId, true));
+        when(eventsMapper.toDomain(organizedNoPending)).thenReturn(eventDomain(organizedNoPendingId, true));
+        when(eventsMapper.toDomain(other)).thenReturn(eventDomain(otherId, true));
+
+        PageEventSummary response = eventService.listEvents(null, null, null, EventStatus.OK,
+                true, null, userId, 0, 20, "startTime,asc");
+
+        assertThat(response.content()).extracting(EventSummary::isOrderPending)
+                .containsExactly(true, false, null);
     }
 
     @Test

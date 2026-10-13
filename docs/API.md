@@ -415,9 +415,12 @@ Response `200`: paginated wrapper with items:
   "longitude": 47.507900,
   "priceUnit": "USD",
   "status": "OK",
-  "minPrice": 0.00
+  "minPrice": 0.00,
+  "isOrderPending": true
 }
 ```
+`isOrderPending` is `true`/`false` when the caller is an organizer of that event (whether it
+still has a `PENDING` order to review), or `null` for anonymous callers and non-organizers.
 
 ### GET `/events/{eventId}`
 Public events are visible to everyone. A private event is visible only to its organizers (`CREATOR` / `ADMIN`): an anonymous caller gets `401`, and an authenticated non-organizer gets `403`. Unknown id: `404`.
@@ -437,6 +440,7 @@ Response `200`:
   "priceUnit": "USD",
   "status": "OK",
   "myRole": null,
+  "isOrderPending": null,
   "tiers": [
     {
       "id": "a1b2c3d4-0000-4000-8000-000000000001",
@@ -451,6 +455,9 @@ Response `200`:
 }
 ```
 `myRole` is `CREATOR`, `ADMIN`, or `null` (anonymous / not an organizer).
+`isOrderPending` is `true`/`false` for organizers (whether the event still has a `PENDING`
+order to review), or `null` for anonymous callers and non-organizers. It is only populated by
+this read endpoint; creation, update and cancellation responses omit it (`null`).
 `remaining` = `capacity` minus tickets in `VALID` or `USED`.
 
 ### PATCH `/events/{eventId}` 🔒
