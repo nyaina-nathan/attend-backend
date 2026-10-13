@@ -61,6 +61,27 @@ set -a; source .env; set +a
 
 The API is served under `/api` on port 8080 by default.
 
+## Running with Docker
+
+The `Dockerfile` is a multi-stage build (JDK build stage → JRE runtime, non-root user) and
+`docker-compose.yml` runs the app with `.env` supplied as the container environment. There is
+**no database service** in the compose file — the app talks to an external PostgreSQL, e.g.
+[Neon](https://neon.tech).
+
+```bash
+docker compose up --build     # build the image and run
+docker compose down           # stop and remove the container
+```
+
+- The container listens on `8080` (mapped to host `8080`) and reads every variable from `.env`
+  at runtime via `env_file`; nothing from `.env` is baked into the image.
+- **Neon:** point `DB_URL` at your Neon endpoint and require TLS, for example
+  `jdbc:postgresql://<host>/<db>?sslmode=require`. Flyway migrates the schema on startup.
+- **Cookies over plain HTTP:** the app defaults to `COOKIE_SECURE=true` / `COOKIE_SAME_SITE=None`,
+  which browsers only accept over HTTPS. For a local HTTP run, add
+  `COOKIE_SECURE=false` and `COOKIE_SAME_SITE=Lax` to `.env`, and set `CORS_ALLOWED_ORIGIN` to
+  your frontend origin.
+
 ## API
 
 The authoritative references are [`docs/API.md`](docs/API.md) (spec, examples, error
