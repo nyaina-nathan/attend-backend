@@ -17,6 +17,7 @@ import mg.improve.attend.domain.entity.Events;
 import mg.improve.attend.domain.entity.TicketTier;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
+import mg.improve.attend.domain.enums.OrderStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.domain.mapper.TicketTierMapper;
 import mg.improve.attend.repository.JEventsRepository;
@@ -68,6 +69,8 @@ class DashboardServiceTests {
                 .thenReturn(List.of());
         when(events.findPostponedAttention(eq(userId), eq(EventStatus.POSTPONED), eq(COUNTED)))
                 .thenReturn(List.of());
+        when(events.findPendingOrderAttention(eq(userId), eq(OrderStatus.PENDING)))
+                .thenReturn(List.of());
         when(tickets.countUpcomingTickets(eq(userId), any(), eq(UPCOMING), eq(TicketStatus.VALID)))
                 .thenReturn(0L);
         when(tickets.findNextUpcomingTicket(eq(userId), any(), eq(UPCOMING), eq(TicketStatus.VALID), any()))
@@ -106,6 +109,8 @@ class DashboardServiceTests {
                 .thenReturn(List.of());
         when(events.findPostponedAttention(eq(userId), eq(EventStatus.POSTPONED), eq(COUNTED)))
                 .thenReturn(List.of());
+        when(events.findPendingOrderAttention(eq(userId), eq(OrderStatus.PENDING)))
+                .thenReturn(List.of());
         when(tickets.countUpcomingTickets(eq(userId), any(), eq(UPCOMING), eq(TicketStatus.VALID)))
                 .thenReturn(0L);
         when(tickets.findNextUpcomingTicket(eq(userId), any(), eq(UPCOMING), eq(TicketStatus.VALID), any()))
@@ -136,6 +141,7 @@ class DashboardServiceTests {
         UUID lateEvent = UUID.randomUUID();
         UUID stockEvent = UUID.randomUUID();
         UUID soldOutEvent = UUID.randomUUID();
+        UUID pendingEvent = UUID.randomUUID();
 
         when(events.countOrganizing(eq(userId), any(), eq(UPCOMING))).thenReturn(counters(4, 4));
         when(tickets.aggregateOrganizingSales(eq(userId), any(), eq(UPCOMING), eq(COUNTED)))
@@ -155,6 +161,8 @@ class DashboardServiceTests {
                                 T0.plusSeconds(4 * 86400), 20, 9)));
         when(events.findPostponedAttention(eq(userId), eq(EventStatus.POSTPONED), eq(COUNTED)))
                 .thenReturn(List.of(postponed(earlyEvent, "Rescheduled", T0.plusSeconds(86400), 7)));
+        when(events.findPendingOrderAttention(eq(userId), eq(OrderStatus.PENDING)))
+                .thenReturn(List.of(pendingOrders(pendingEvent, "Needs Review", T0.plusSeconds(3 * 86400), 4)));
         when(tickets.countUpcomingTickets(eq(userId), any(), eq(UPCOMING), eq(TicketStatus.VALID)))
                 .thenReturn(0L);
         when(tickets.findNextUpcomingTicket(eq(userId), any(), eq(UPCOMING), eq(TicketStatus.VALID), any()))
@@ -163,9 +171,10 @@ class DashboardServiceTests {
         List<AttentionItem> attention = dashboardService.getDashboard(userId).organizing().attention();
 
         assertThat(attention).extracting(AttentionItem::type)
-                .containsExactly(AttentionType.POSTPONED, AttentionType.LOW_STOCK, AttentionType.NO_TIERS);
+                .containsExactly(AttentionType.POSTPONED, AttentionType.LOW_STOCK, AttentionType.PENDING_ORDERS,
+                        AttentionType.NO_TIERS);
         assertThat(attention).extracting(AttentionItem::eventId)
-                .containsExactly(earlyEvent, stockEvent, lateEvent);
+                .containsExactly(earlyEvent, stockEvent, pendingEvent, lateEvent);
 
         AttentionItem lowStock = attention.get(1);
         assertThat(lowStock.tierName()).isEqualTo("VIP");
@@ -175,6 +184,11 @@ class DashboardServiceTests {
         AttentionItem postponed = attention.get(0);
         assertThat(postponed.ticketsIssued()).isEqualTo(7);
         assertThat(postponed.tierId()).isNull();
+
+        AttentionItem pending = attention.get(2);
+        assertThat(pending.pendingOrders()).isEqualTo(4);
+        assertThat(pending.ticketsIssued()).isNull();
+        assertThat(pending.tierId()).isNull();
     }
 
     @Test
@@ -194,6 +208,8 @@ class DashboardServiceTests {
         when(tiers.findLowStockTiers(eq(userId), any(), eq(EventStatus.OK), eq(COUNTED)))
                 .thenReturn(List.of());
         when(events.findPostponedAttention(eq(userId), eq(EventStatus.POSTPONED), eq(COUNTED)))
+                .thenReturn(List.of());
+        when(events.findPendingOrderAttention(eq(userId), eq(OrderStatus.PENDING)))
                 .thenReturn(List.of());
         when(tickets.countUpcomingTickets(eq(userId), any(), eq(UPCOMING), eq(TicketStatus.VALID)))
                 .thenReturn(0L);
@@ -243,6 +259,8 @@ class DashboardServiceTests {
         when(tiers.findLowStockTiers(eq(userId), any(), eq(EventStatus.OK), eq(COUNTED)))
                 .thenReturn(List.of());
         when(events.findPostponedAttention(eq(userId), eq(EventStatus.POSTPONED), eq(COUNTED)))
+                .thenReturn(List.of());
+        when(events.findPendingOrderAttention(eq(userId), eq(OrderStatus.PENDING)))
                 .thenReturn(List.of());
         when(tickets.countUpcomingTickets(eq(userId), any(), eq(UPCOMING), eq(TicketStatus.VALID)))
                 .thenReturn(2L);
@@ -347,6 +365,31 @@ class DashboardServiceTests {
             @Override
             public long getTicketsIssued() {
                 return issued;
+            }
+        };
+    }
+
+    private static JEventsRepository.PendingOrdersAttentionRow pendingOrders(UUID eventId, String title,
+            Instant start, long count) {
+        return new JEventsRepository.PendingOrdersAttentionRow() {
+            @Override
+            public UUID getEventId() {
+                return eventId;
+            }
+
+            @Override
+            public String getEventTitle() {
+                return title;
+            }
+
+            @Override
+            public Instant getStartTime() {
+                return start;
+            }
+
+            @Override
+            public long getPendingOrders() {
+                return count;
             }
         };
     }

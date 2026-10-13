@@ -18,21 +18,29 @@ public record AttentionItem(
         UUID tierId,
         String tierName,
         Integer remaining,
-        Long ticketsIssued) {
+        Long ticketsIssued,
+        Long pendingOrders) {
 
     public static AttentionItem noTiers(UUID eventId, String eventTitle, Instant startTime) {
-        return new AttentionItem(AttentionType.NO_TIERS, eventId, eventTitle, startTime, null, null, null, null);
+        return new AttentionItem(AttentionType.NO_TIERS, eventId, eventTitle, startTime, null, null, null, null,
+                null);
     }
 
     public static AttentionItem lowStock(UUID eventId, String eventTitle, Instant startTime,
             UUID tierId, String tierName, int remaining) {
         return new AttentionItem(AttentionType.LOW_STOCK, eventId, eventTitle, startTime,
-                tierId, tierName, remaining, null);
+                tierId, tierName, remaining, null, null);
     }
 
     public static AttentionItem postponed(UUID eventId, String eventTitle, Instant startTime,
             long ticketsIssued) {
         return new AttentionItem(AttentionType.POSTPONED, eventId, eventTitle, startTime, null, null, null,
-                ticketsIssued);
+                ticketsIssued, null);
+    }
+
+    public static AttentionItem pendingOrders(UUID eventId, String eventTitle, Instant startTime,
+            long pendingOrders) {
+        return new AttentionItem(AttentionType.PENDING_ORDERS, eventId, eventTitle, startTime, null, null, null,
+                null, pendingOrders);
     }
 }

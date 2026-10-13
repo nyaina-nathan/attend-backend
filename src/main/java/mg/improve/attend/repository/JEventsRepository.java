@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.UUID;
 import mg.improve.attend.domain.enums.EventRole;
 import mg.improve.attend.domain.enums.EventStatus;
+import mg.improve.attend.domain.enums.OrderStatus;
 import mg.improve.attend.domain.enums.TicketStatus;
 import mg.improve.attend.repository.entities.JEvents;
 import org.springframework.data.domain.Pageable;
@@ -77,6 +78,22 @@ public interface JEventsRepository extends JpaRepository<JEvents, UUID>, JpaSpec
             @Param("status") EventStatus status,
             @Param("statuses") Collection<TicketStatus> statuses);
 
+    /**
+     * Dashboard {@code PENDING_ORDERS} candidates: the caller's events that still have at least
+     * one order in the given (task) status, with how many. The inner join already drops events
+     * without such orders.
+     */
+    @Query("select e.id as eventId, e.title as eventTitle, e.startTime as startTime, "
+            + "count(o) as pendingOrders "
+            + "from JEvents e join JTicketOrder o on o.event = e "
+            + "where o.orderStatus = :status "
+            + "and exists (select org.event.id from JEventOrganizer org "
+            + "where org.event = e and org.user.id = :userId) "
+            + "group by e.id, e.title, e.startTime "
+            + "order by e.startTime asc")
+    List<PendingOrdersAttentionRow> findPendingOrderAttention(@Param("userId") UUID userId,
+            @Param("status") OrderStatus status);
+
     /** Projection of {@link #countOrganizing(UUID, Instant, Collection)}. */
     interface OrganizingCounters {
         long getEventsTotal();
@@ -109,5 +126,16 @@ public interface JEventsRepository extends JpaRepository<JEvents, UUID>, JpaSpec
         Instant getStartTime();
 
         long getTicketsIssued();
+    }
+
+    /** Projection of {@link #findPendingOrderAttention(UUID, OrderStatus)}. */
+    interface PendingOrdersAttentionRow {
+        UUID getEventId();
+
+        String getEventTitle();
+
+        Instant getStartTime();
+
+        long getPendingOrders();
     }
 }
