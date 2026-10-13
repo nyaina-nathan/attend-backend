@@ -1,6 +1,7 @@
 package mg.improve.attend.repository;
 
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -22,6 +23,14 @@ public interface JTicketOrderRepository extends JpaRepository<JTicketOrder, UUID
     boolean existsByPaymentMethod_Id(UUID paymentMethodId);
 
     boolean existsByPaymentMethod_IdAndTransactionReference(UUID paymentMethodId, String transactionReference);
+
+    boolean existsByEvent_IdAndOrderStatus(UUID eventId, OrderStatus orderStatus);
+
+    /** The subset of the given events that still have at least one order in the given status. */
+    @Query("select distinct o.event.id from JTicketOrder o "
+            + "where o.event.id in :eventIds and o.orderStatus = :status")
+    List<UUID> findEventIdsByEventIdsAndOrderStatus(@Param("eventIds") Collection<UUID> eventIds,
+            @Param("status") OrderStatus status);
 
     /** Loads one order with everything needed for its response in a single query. */
     @EntityGraph(attributePaths = {"owner", "paymentMethod", "reviewedBy", "items", "items.tier"})

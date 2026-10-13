@@ -2260,6 +2260,13 @@ components:
           format: double
           minimum: 0
           description: Lowest price across the event's tiers, 2 decimals.
+        isOrderPending:
+          description: |
+            `true`/`false` when the caller organizes this event (whether it still has a
+            `PENDING` order to review), or `null` for anonymous callers and non-organizers.
+          oneOf:
+            - type: boolean
+            - type: 'null'
 
     EventDetail:
       type: object
@@ -2314,6 +2321,15 @@ components:
             non-organizers.
           oneOf:
             - $ref: '#/components/schemas/EventRole'
+            - type: 'null'
+        isOrderPending:
+          description: |
+            `true`/`false` when the caller organizes this event (whether it still has a
+            `PENDING` order to review), or `null` for anonymous callers and non-organizers.
+            Only populated by the detail read; creation, update and cancellation return
+            `null`.
+          oneOf:
+            - type: boolean
             - type: 'null'
         tiers:
           type: array

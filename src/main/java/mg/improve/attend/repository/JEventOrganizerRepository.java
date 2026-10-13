@@ -1,5 +1,6 @@
 package mg.improve.attend.repository;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -27,6 +28,12 @@ public interface JEventOrganizerRepository extends JpaRepository<JEventOrganizer
 
     @Query("select o.event.id from JEventOrganizer o where o.user.id = :userId and o.eventRole = :eventRole")
     List<UUID> findEventIdsByUserAndRole(@Param("userId") UUID userId, @Param("eventRole") EventRole eventRole);
+
+    /** The subset of the given events the caller organizes (any role). */
+    @Query("select o.event.id from JEventOrganizer o "
+            + "where o.user.id = :userId and o.event.id in :eventIds")
+    List<UUID> findEventIdsByUserAndEventIds(@Param("userId") UUID userId,
+            @Param("eventIds") Collection<UUID> eventIds);
 
     @Modifying
     @Query("delete from JEventOrganizer o where o.event.id = :eventId")
