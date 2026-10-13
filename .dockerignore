@@ -1,0 +1,15 @@
+.git
+.github
+.gradle
+build
+bin
+.idea
+.vscode
+
+# Secrets and local overrides must never be baked into the image.
+.env
+.env.example
+
+# Docs are not needed to build the jar.
+docs
+*.md
